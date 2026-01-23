@@ -257,14 +257,19 @@ if ($updateTitle -match '(\d{5}\.\d+)') {
 
 $buildDate = Get-Date -Format "yyyyMMdd"
 
+# Create a clean release title by stripping common prefixes
+$releaseTitle = $updateTitle -replace '^Feature update to ', ''
+
 # Output to GITHUB_OUTPUT
 "update_title=$updateTitle" >> $env:GITHUB_OUTPUT
+"release_title=$releaseTitle" >> $env:GITHUB_OUTPUT
 "build_number=$buildNumber" >> $env:GITHUB_OUTPUT
 "build_date=$buildDate" >> $env:GITHUB_OUTPUT
 "uuid=$uuid" >> $env:GITHUB_OUTPUT
 
 Write-Host ""
 Write-Host "Build: $updateTitle"
+Write-Host "Release Title: $releaseTitle"
 Write-Host "Build Number: $buildNumber"
 Write-Host "Date: $buildDate"
 Write-Host "UUID: $uuid"

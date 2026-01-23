@@ -116,8 +116,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ steps.query.outputs.build_number }}-amd64-${{ inputs.language }}-${{ inputs.edition }}-${{ steps.query.outputs.build_date }}"
-          name: "${{ steps.query.outputs.update_title }} (amd64, ${{ inputs.language }}, ${{ inputs.edition }})"
+          tag_name: "${{ steps.query.outputs.build_date }}-${{ steps.query.outputs.build_number }}-amd64-${{ inputs.language }}-${{ inputs.edition }}"
+          name: "${{ steps.query.outputs.release_title }} (amd64, ${{ inputs.language }}, ${{ inputs.edition }})"
           body: |
             ## Windows 10 Build Info
             - **Build:** ${{ steps.query.outputs.update_title }}
