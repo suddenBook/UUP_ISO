@@ -1,0 +1,142 @@
+name: Build Windows 10 ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      language:
+        description: 'Language code (e.g., en-us, zh-cn)'
+        type: string
+        default: 'en-us'
+      edition:
+        description: 'Windows edition'
+        type: choice
+        options:
+          - PROFESSIONAL
+          - CORE
+        default: 'PROFESSIONAL'
+
+jobs:
+  build-iso:
+    runs-on: windows-2022
+    timeout-minutes: 300
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Query UUP Dump API
+        id: query
+        shell: pwsh
+        run: |
+          .\scripts\query-build.ps1 `
+            -Product "Windows 10" `
+            -Channel "Retail" `
+            -Milestone "22H2" `
+            -Architecture "amd64" `
+            -Language "${{ inputs.language }}" `
+            -Edition "${{ inputs.edition }}"
+
+      - name: Download UUP files
+        shell: pwsh
+        run: |
+          .\scripts\download-uup.ps1 -DownloadDir "D:\UUPs"
+
+      - name: Download converter
+        shell: pwsh
+        run: |
+          $converterDir = "D:\converter"
+          New-Item -ItemType Directory -Path $converterDir -Force | Out-Null
+
+          $zipUrl = "https://github.com/abbodi1406/BatUtil/archive/refs/heads/master.zip"
+          $zipPath = "D:\batutil.zip"
+          Write-Host "Downloading abbodi1406/BatUtil..."
+          aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "batutil.zip" $zipUrl
+
+          Write-Host "Extracting converter..."
+          7z x $zipPath -o"D:\batutil_extract" -y | Out-Null
+          Copy-Item -Path "D:\batutil_extract\BatUtil-master\uup-converter-wimlib\*" -Destination $converterDir -Recurse -Force
+
+          Remove-Item $zipPath -Force
+          Remove-Item "D:\batutil_extract" -Recurse -Force
+          Write-Host "Converter ready at $converterDir"
+
+      - name: Convert to ISO
+        shell: pwsh
+        run: |
+          .\scripts\convert-to-iso.ps1 `
+            -ConverterDir "D:\converter" `
+            -UUPDir "D:\UUPs"
+
+      - name: Split ISO with 7z
+        id: split
+        shell: pwsh
+        run: |
+          $outputDir = "D:\output"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+          $iso = Get-ChildItem "D:\converter\*.iso" | Select-Object -First 1
+          if (-not $iso) {
+            Write-Error "No ISO file found in D:\converter\"
+            exit 1
+          }
+
+          $name = $iso.BaseName
+          Write-Host "Splitting $($iso.Name) into 1.9 GB parts..."
+          7z a -v1900m -mx=0 "$outputDir\$name.7z" $iso.FullName
+
+          $partCount = (Get-ChildItem "$outputDir\*.7z.*").Count
+          Write-Host "Created $partCount parts"
+
+          echo "iso_name=$name" >> $env:GITHUB_OUTPUT
+          echo "iso_filename=$($iso.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Generate checksums
+        id: checksums
+        shell: pwsh
+        run: |
+          $iso = Get-ChildItem "D:\converter\*.iso" | Select-Object -First 1
+          $checksumFile = "D:\output\checksums.sha256"
+
+          $isoHash = (Get-FileHash $iso.FullName -Algorithm SHA256).Hash
+          "$isoHash  $($iso.Name)" | Out-File -FilePath $checksumFile -Encoding utf8
+
+          Get-ChildItem "D:\output\*.7z.*" | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$hash  $($_.Name)" | Add-Content -Path $checksumFile -Encoding utf8
+          }
+
+          Write-Host "Checksums:"
+          Get-Content $checksumFile
+
+          echo "iso_hash=$isoHash" >> $env:GITHUB_OUTPUT
+          echo "iso_filename=$($iso.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.query.outputs.build_number }}-amd64-${{ inputs.language }}-${{ inputs.edition }}-${{ steps.query.outputs.build_date }}"
+          name: "${{ steps.query.outputs.update_title }} (amd64, ${{ inputs.language }}, ${{ inputs.edition }})"
+          body: |
+            ## Windows 10 Build Info
+            - **Build:** ${{ steps.query.outputs.update_title }}
+            - **Architecture:** amd64
+            - **Language:** ${{ inputs.language }}
+            - **Edition:** ${{ inputs.edition }}
+            - **Options:** Updates integrated, Component cleanup, .NET 3.5
+            - **Built on:** ${{ steps.query.outputs.build_date }}
+
+            ## How to Extract
+            Download all `.7z.xxx` files to the same folder, then run:
+            ```
+            7z x ${{ steps.checksums.outputs.iso_filename }}.7z.001
+            ```
+
+            ## Checksums (SHA256)
+            ```
+            ${{ steps.checksums.outputs.iso_hash }}  ${{ steps.checksums.outputs.iso_filename }}
+            ```
+          files: |
+            D:/output/*.7z.*
+            D:/output/checksums.sha256

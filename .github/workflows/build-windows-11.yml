@@ -1,18 +1,10 @@
-name: Build Windows ISO
+name: Build Windows 11 ISO
 
 on:
   workflow_dispatch:
     inputs:
-      product:
-        description: 'Windows product'
-        type: choice
-        options:
-          - Windows 11
-          - Windows 10
-          - Windows Server
-        default: 'Windows 11'
       channel:
-        description: 'Update channel (Windows 11 only; ignored for Win10/Server)'
+        description: 'Update channel'
         type: choice
         options:
           - Retail
@@ -22,14 +14,14 @@ on:
           - Canary
         default: 'Retail'
       milestone:
-        description: 'Windows 11 version (Retail/RP only; ignored for Win10/Server)'
+        description: 'Windows version (Retail/ReleasePreview only)'
         type: choice
         options:
           - 25H2
           - 24H2
         default: '25H2'
       architecture:
-        description: 'CPU architecture (arm64: Windows 11 only)'
+        description: 'CPU architecture'
         type: choice
         options:
           - amd64
@@ -40,15 +32,11 @@ on:
         type: string
         default: 'en-us'
       edition:
-        description: 'Edition (client: PROFESSIONAL/CORE; server: SERVERSTANDARD/SERVERSTANDARDCORE/SERVERDATACENTER/SERVERDATACENTERCORE)'
+        description: 'Windows edition'
         type: choice
         options:
           - PROFESSIONAL
           - CORE
-          - SERVERSTANDARD
-          - SERVERSTANDARDCORE
-          - SERVERDATACENTER
-          - SERVERDATACENTERCORE
         default: 'PROFESSIONAL'
 
 jobs:
@@ -67,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\query-build.ps1 `
-            -Product "${{ inputs.product }}" `
+            -Product "Windows 11" `
             -Channel "${{ inputs.channel }}" `
             -Milestone "${{ inputs.milestone }}" `
             -Architecture "${{ inputs.architecture }}" `
@@ -85,18 +73,15 @@ jobs:
           $converterDir = "D:\converter"
           New-Item -ItemType Directory -Path $converterDir -Force | Out-Null
 
-          # Download the repository archive
           $zipUrl = "https://github.com/abbodi1406/BatUtil/archive/refs/heads/master.zip"
           $zipPath = "D:\batutil.zip"
           Write-Host "Downloading abbodi1406/BatUtil..."
           aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "batutil.zip" $zipUrl
 
-          # Extract the uup-converter-wimlib folder
           Write-Host "Extracting converter..."
           7z x $zipPath -o"D:\batutil_extract" -y | Out-Null
           Copy-Item -Path "D:\batutil_extract\BatUtil-master\uup-converter-wimlib\*" -Destination $converterDir -Recurse -Force
 
-          # Cleanup
           Remove-Item $zipPath -Force
           Remove-Item "D:\batutil_extract" -Recurse -Force
           Write-Host "Converter ready at $converterDir"
@@ -138,11 +123,9 @@ jobs:
           $iso = Get-ChildItem "D:\converter\*.iso" | Select-Object -First 1
           $checksumFile = "D:\output\checksums.sha256"
 
-          # ISO checksum
           $isoHash = (Get-FileHash $iso.FullName -Algorithm SHA256).Hash
           "$isoHash  $($iso.Name)" | Out-File -FilePath $checksumFile -Encoding utf8
 
-          # 7z part checksums
           Get-ChildItem "D:\output\*.7z.*" | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
             "$hash  $($_.Name)" | Add-Content -Path $checksumFile -Encoding utf8
@@ -160,9 +143,8 @@ jobs:
           tag_name: "${{ steps.query.outputs.build_number }}-${{ inputs.architecture }}-${{ inputs.language }}-${{ inputs.edition }}-${{ steps.query.outputs.build_date }}"
           name: "${{ steps.query.outputs.update_title }} (${{ inputs.architecture }}, ${{ inputs.language }}, ${{ inputs.edition }})"
           body: |
-            ## ${{ inputs.product }} Build Info
+            ## Windows 11 Build Info
             - **Build:** ${{ steps.query.outputs.update_title }}
-            - **Product:** ${{ inputs.product }}
             - **Architecture:** ${{ inputs.architecture }}
             - **Language:** ${{ inputs.language }}
             - **Edition:** ${{ inputs.edition }}
