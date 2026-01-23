@@ -23,7 +23,7 @@ if ($uupFiles.Count -eq 0) {
 }
 Write-Host "Found $($uupFiles.Count) UUP files"
 
-# Create ConvertConfig.ini (must use [convert-UUP] section header and "Key =Value" format)
+# Create ConvertConfig.ini (must use [convert-UUP] section header and "Key=Value" format)
 $configPath = Join-Path $ConverterDir "ConvertConfig.ini"
 $lines = @(
     "[convert-UUP]",

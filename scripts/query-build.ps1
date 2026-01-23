@@ -1,4 +1,5 @@
 param(
+    [Parameter(Mandatory)][string]$Product,
     [Parameter(Mandatory)][string]$Channel,
     [Parameter(Mandatory)][string]$Milestone,
     [Parameter(Mandatory)][string]$Architecture,
@@ -8,6 +9,25 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Validate product
+if ($Product -notin @("Windows 11", "Windows 10", "Windows Server")) {
+    Write-Error "Invalid product: '$Product'. Must be 'Windows 11', 'Windows 10', or 'Windows Server'"
+    exit 1
+}
+
+# Validate product/edition combinations
+$serverEditions = @("SERVERSTANDARD", "SERVERSTANDARDCORE", "SERVERDATACENTER", "SERVERDATACENTERCORE")
+$clientEditions = @("PROFESSIONAL", "CORE")
+
+if ($Product -eq "Windows Server" -and $Edition -notin $serverEditions) {
+    Write-Error "Invalid edition '$Edition' for Windows Server. Must be one of: $($serverEditions -join ', ')"
+    exit 1
+}
+if ($Product -in @("Windows 11", "Windows 10") -and $Edition -notin $clientEditions) {
+    Write-Error "Invalid edition '$Edition' for $Product. Must be one of: $($clientEditions -join ', ')"
+    exit 1
+}
+
 # Validate language code format
 if ($Language -notmatch '^[a-z]{2}-[a-z]{2}$') {
     Write-Error "Invalid language code format: '$Language'. Expected format: xx-xx (e.g., en-us, zh-cn)"
@@ -16,6 +36,7 @@ if ($Language -notmatch '^[a-z]{2}-[a-z]{2}$') {
 
 $baseUrl = "https://api.uupdump.net"
 
+Write-Host "Product: $Product"
 Write-Host "Channel: $Channel"
 Write-Host "Milestone: $Milestone"
 Write-Host "Architecture: $Architecture"
@@ -23,11 +44,86 @@ Write-Host "Language: $Language"
 Write-Host "Edition: $Edition"
 Write-Host ""
 
-# Step 1: Get UUID based on channel
+# Step 1: Get UUID based on product and channel
 $uuid = $null
 $updateTitle = $null
 
-if ($Channel -in @("Retail", "ReleasePreview")) {
+if ($Product -eq "Windows 10") {
+    # Windows 10: always use Feature Update for 22H2
+    Write-Host "Querying listid API for Windows 10 22H2 Feature Update..."
+    $searchUrl = "$baseUrl/listid.php?search=Feature+update+to+Windows+10%2C+version+22H2&sortByDate=1"
+    $response = Invoke-RestMethod -Uri $searchUrl -Method Get
+
+    if ($response.response.error) {
+        Write-Error "API error: $($response.response.error)"
+        exit 1
+    }
+
+    $builds = $response.response.builds
+    if (-not $builds) {
+        Write-Error "No Feature Update builds found for Windows 10 22H2"
+        exit 1
+    }
+
+    $matched = $null
+    foreach ($prop in $builds.PSObject.Properties) {
+        $build = $prop.Value
+        $titleMatch = $build.title -like "*Feature update to Windows 10, version 22H2*"
+        $archMatch = $build.arch -eq $Architecture
+        if ($titleMatch -and $archMatch) {
+            $matched = $build
+            $uuid = $build.uuid
+            break
+        }
+    }
+
+    if (-not $matched) {
+        Write-Error "No matching Feature Update found for Windows 10 22H2 ($Architecture)"
+        exit 1
+    }
+
+    $updateTitle = $matched.title
+    Write-Host "Found: $updateTitle (UUID: $uuid)"
+}
+elseif ($Product -eq "Windows Server") {
+    # Windows Server: always use Server 2025 (24H2)
+    Write-Host "Querying listid API for Windows Server 2025..."
+    $searchUrl = "$baseUrl/listid.php?search=Windows+Server+2025&sortByDate=1"
+    $response = Invoke-RestMethod -Uri $searchUrl -Method Get
+
+    if ($response.response.error) {
+        Write-Error "API error: $($response.response.error)"
+        exit 1
+    }
+
+    $builds = $response.response.builds
+    if (-not $builds) {
+        Write-Error "No builds found for Windows Server 2025"
+        exit 1
+    }
+
+    $matched = $null
+    foreach ($prop in $builds.PSObject.Properties) {
+        $build = $prop.Value
+        $titleMatch = $build.title -like "*Windows Server 2025*"
+        $archMatch = $build.arch -eq $Architecture
+        if ($titleMatch -and $archMatch) {
+            $matched = $build
+            $uuid = $build.uuid
+            break
+        }
+    }
+
+    if (-not $matched) {
+        Write-Error "No matching build found for Windows Server 2025 ($Architecture)"
+        exit 1
+    }
+
+    $updateTitle = $matched.title
+    Write-Host "Found: $updateTitle (UUID: $uuid)"
+}
+elseif ($Channel -in @("Retail", "ReleasePreview")) {
+    # Windows 11: Retail/ReleasePreview channels
     Write-Host "Querying listid API for $Channel channel, milestone $Milestone..."
     $searchUrl = "$baseUrl/listid.php?search=$Milestone&sortByDate=1"
     $response = Invoke-RestMethod -Uri $searchUrl -Method Get
@@ -43,7 +139,6 @@ if ($Channel -in @("Retail", "ReleasePreview")) {
         exit 1
     }
 
-    # Filter: title contains "Windows 11, version $Milestone" and arch matches
     $matched = $null
     foreach ($prop in $builds.PSObject.Properties) {
         $build = $prop.Value
@@ -65,8 +160,7 @@ if ($Channel -in @("Retail", "ReleasePreview")) {
     Write-Host "Found: $updateTitle (UUID: $uuid)"
 }
 else {
-    # Beta, Dev, Canary - use fetchupd API
-    # Ring must be properly capitalized
+    # Windows 11: Beta, Dev, Canary - use fetchupd API
     $ringMap = @{
         "Beta"    = "WIF"
         "Dev"     = "WIS"
@@ -93,7 +187,6 @@ else {
         exit 1
     }
 
-    # Take the first build
     $firstProp = $builds.PSObject.Properties | Select-Object -First 1
     $uuid = $firstProp.Value.uuid
     $updateTitle = $firstProp.Value.title

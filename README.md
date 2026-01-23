@@ -1,10 +1,16 @@
 # UUP ISO Builder
 
-A GitHub Actions workflow that builds Windows 11 ISOs from UUP (Unified Update Platform) files. It downloads UUP files via the [UUP dump](https://uupdump.net/) API, converts them to a bootable ISO with integrated updates, and uploads split archives to GitHub Releases.
+A GitHub Actions workflow that builds Windows ISOs from UUP (Unified Update Platform) files. It downloads UUP files via the [UUP dump](https://uupdump.net/) API, converts them to a bootable ISO with integrated updates, and uploads split archives to GitHub Releases.
+
+## Supported Products
+
+- **Windows 11** — Latest builds from Retail, ReleasePreview, Beta, Dev, or Canary channels
+- **Windows 10** — Latest 22H2 Feature Update (with ESU patches)
+- **Windows Server** — Windows Server 2025 (24H2)
 
 ## Features
 
-- Fetches the latest Windows 11 builds from any update channel
+- Fetches the latest builds from UUP dump (always uses Feature Updates, never Cumulative Updates)
 - Integrates cumulative updates into the image
 - Runs DISM component cleanup and ResetBase for smaller images
 - Integrates .NET Framework 3.5
@@ -18,13 +24,14 @@ A GitHub Actions workflow that builds Windows 11 ISOs from UUP (Unified Update P
 3. Click **"Build Windows ISO"** → **"Run workflow"**
 4. Select your parameters:
 
-| Parameter | Options | Default | Description |
-|-----------|---------|---------|-------------|
-| Channel | Retail, ReleasePreview, Beta, Dev, Canary | Retail | Update channel |
-| Milestone | 25H2, 24H2 | 25H2 | Windows version (Retail/RP only) |
-| Architecture | amd64, arm64 | amd64 | CPU architecture |
-| Language | Free text | en-us | Language code (e.g., `zh-cn`, `de-de`) |
-| Edition | PROFESSIONAL, CORE | PROFESSIONAL | Pro or Home |
+| Parameter | Options | Default | Notes |
+|-----------|---------|---------|-------|
+| Product | Windows 11, Windows 10, Windows Server | Windows 11 | |
+| Channel | Retail, ReleasePreview, Beta, Dev, Canary | Retail | Windows 11 only |
+| Milestone | 25H2, 24H2 | 25H2 | Windows 11 Retail/RP only |
+| Architecture | amd64, arm64 | amd64 | |
+| Language | Free text | en-us | e.g., `zh-cn`, `de-de` |
+| Edition | PROFESSIONAL, CORE, SERVERSTANDARD, SERVERSTANDARDCORE, SERVERDATACENTER, SERVERDATACENTERCORE | PROFESSIONAL | Client editions for Win10/11; Server editions for Server |
 
 5. Wait for the workflow to complete (~1-3 hours)
 6. Download the split 7z files from the **Releases** page

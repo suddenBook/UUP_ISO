@@ -3,8 +3,16 @@ name: Build Windows ISO
 on:
   workflow_dispatch:
     inputs:
+      product:
+        description: 'Windows product'
+        type: choice
+        options:
+          - Windows 11
+          - Windows 10
+          - Windows Server
+        default: 'Windows 11'
       channel:
-        description: 'Update channel'
+        description: 'Update channel (Windows 11 only)'
         type: choice
         options:
           - Retail
@@ -14,7 +22,7 @@ on:
           - Canary
         default: 'Retail'
       milestone:
-        description: 'Windows version (Retail/ReleasePreview only)'
+        description: 'Windows 11 version (Retail/ReleasePreview only)'
         type: choice
         options:
           - 25H2
@@ -32,11 +40,15 @@ on:
         type: string
         default: 'en-us'
       edition:
-        description: 'Windows edition'
+        description: 'Edition (client: PROFESSIONAL/CORE; server: SERVERSTANDARD/SERVERSTANDARDCORE/SERVERDATACENTER/SERVERDATACENTERCORE)'
         type: choice
         options:
           - PROFESSIONAL
           - CORE
+          - SERVERSTANDARD
+          - SERVERSTANDARDCORE
+          - SERVERDATACENTER
+          - SERVERDATACENTERCORE
         default: 'PROFESSIONAL'
 
 jobs:
@@ -55,6 +67,7 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\query-build.ps1 `
+            -Product "${{ inputs.product }}" `
             -Channel "${{ inputs.channel }}" `
             -Milestone "${{ inputs.milestone }}" `
             -Architecture "${{ inputs.architecture }}" `
@@ -147,8 +160,9 @@ jobs:
           tag_name: "${{ steps.query.outputs.build_number }}-${{ inputs.architecture }}-${{ inputs.language }}-${{ inputs.edition }}-${{ steps.query.outputs.build_date }}"
           name: "${{ steps.query.outputs.update_title }} (${{ inputs.architecture }}, ${{ inputs.language }}, ${{ inputs.edition }})"
           body: |
-            ## Windows 11 Build Info
+            ## ${{ inputs.product }} Build Info
             - **Build:** ${{ steps.query.outputs.update_title }}
+            - **Product:** ${{ inputs.product }}
             - **Architecture:** ${{ inputs.architecture }}
             - **Language:** ${{ inputs.language }}
             - **Edition:** ${{ inputs.edition }}
