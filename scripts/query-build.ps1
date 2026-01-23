@@ -51,7 +51,7 @@ if ($Channel -in @("Retail", "ReleasePreview")) {
         $archMatch = $build.arch -eq $Architecture
         if ($titleMatch -and $archMatch) {
             $matched = $build
-            $uuid = $prop.Name
+            $uuid = $build.uuid
             break
         }
     }
@@ -95,7 +95,7 @@ else {
 
     # Take the first build
     $firstProp = $builds.PSObject.Properties | Select-Object -First 1
-    $uuid = $firstProp.Name
+    $uuid = $firstProp.Value.uuid
     $updateTitle = $firstProp.Value.title
     Write-Host "Found: $updateTitle (UUID: $uuid)"
 }
