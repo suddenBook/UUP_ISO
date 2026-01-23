@@ -71,6 +71,14 @@ jobs:
             -ConverterDir "D:\converter" `
             -UUPDir "D:\UUPs"
 
+      - name: Integrate latest cumulative update
+        shell: pwsh
+        run: |
+          .\scripts\integrate-server-update.ps1 `
+            -ConverterDir "D:\converter" `
+            -WorkDir "D:\update_work" `
+            -Edition "${{ inputs.edition }}"
+
       - name: Split ISO with 7z
         id: split
         shell: pwsh
@@ -126,7 +134,7 @@ jobs:
             - **Architecture:** amd64
             - **Language:** ${{ inputs.language }}
             - **Edition:** ${{ inputs.edition }}
-            - **Options:** Updates integrated, Component cleanup, .NET 3.5
+            - **Options:** Updates integrated, Latest CU applied, Component cleanup, .NET 3.5
             - **Built on:** ${{ steps.query.outputs.build_date }}
 
             ## How to Extract
