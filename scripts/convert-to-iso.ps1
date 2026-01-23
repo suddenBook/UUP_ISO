@@ -27,14 +27,14 @@ Write-Host "Found $($uupFiles.Count) UUP files"
 $configPath = Join-Path $ConverterDir "ConvertConfig.ini"
 $configContent = @"
 [Configuration]
-AutoStart  =1
-AutoExit   =1
-AddUpdates =1
-Cleanup    =1
-NetFx3     =1
-ResetBase  =1
+AutoStart=1
+AutoExit=1
+AddUpdates=1
+Cleanup=1
+NetFx3=1
+ResetBase=1
 "@
-$configContent | Out-File -FilePath $configPath -Encoding ascii
+$configContent | Out-File -FilePath $configPath -Encoding ascii -NoNewline
 Write-Host "Created ConvertConfig.ini with updates, cleanup, ResetBase, and .NET 3.5"
 
 # Copy UUP files to converter's UUPs folder
