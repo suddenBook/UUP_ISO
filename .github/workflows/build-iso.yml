@@ -166,5 +166,5 @@ jobs:
             ${{ steps.checksums.outputs.iso_hash }}  ${{ steps.checksums.outputs.iso_filename }}
             ```
           files: |
-            D:\output\*.7z.*
-            D:\output\checksums.sha256
+            D:/output/*.7z.*
+            D:/output/checksums.sha256
