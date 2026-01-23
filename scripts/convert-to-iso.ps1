@@ -32,7 +32,7 @@ $lines = @(
     "AddUpdates=1",
     "Cleanup=1",
     "NetFx3=1",
-    "ResetBase=1",
+    "ResetBase=1"
 )
 $lines -join "`r`n" | Set-Content -Path $configPath -Encoding ASCII
 Write-Host "Created ConvertConfig.ini with [convert-UUP] header, updates, cleanup, ResetBase, and .NET 3.5"
