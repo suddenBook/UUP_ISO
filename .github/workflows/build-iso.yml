@@ -12,7 +12,7 @@ on:
           - Windows Server
         default: 'Windows 11'
       channel:
-        description: 'Update channel (Windows 11 only)'
+        description: 'Update channel (Windows 11 only; ignored for Win10/Server)'
         type: choice
         options:
           - Retail
@@ -22,14 +22,14 @@ on:
           - Canary
         default: 'Retail'
       milestone:
-        description: 'Windows 11 version (Retail/ReleasePreview only)'
+        description: 'Windows 11 version (Retail/RP only; ignored for Win10/Server)'
         type: choice
         options:
           - 25H2
           - 24H2
         default: '25H2'
       architecture:
-        description: 'CPU architecture'
+        description: 'CPU architecture (arm64: Windows 11 only)'
         type: choice
         options:
           - amd64
