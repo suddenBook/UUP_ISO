@@ -67,7 +67,8 @@ Write-Host ""
 
 Push-Location $ConverterDir
 try {
-    & cmd.exe /c $convertCmd
+    # Pipe "1" to select "Create ISO with install.wim" from the menu
+    echo 1 | cmd.exe /c $convertCmd
     $exitCode = $LASTEXITCODE
 } finally {
     Pop-Location
