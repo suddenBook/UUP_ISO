@@ -23,18 +23,19 @@ if ($uupFiles.Count -eq 0) {
 }
 Write-Host "Found $($uupFiles.Count) UUP files"
 
-# Create ConvertConfig.ini (no section header - batch parser expects bare key=value lines)
+# Create ConvertConfig.ini (must use [convert-UUP] section header and "Key =Value" format)
 $configPath = Join-Path $ConverterDir "ConvertConfig.ini"
 $lines = @(
-    "AutoStart=1",
-    "AutoExit=1",
-    "AddUpdates=1",
-    "Cleanup=1",
-    "NetFx3=1",
-    "ResetBase=1"
+    "[convert-UUP]",
+    "AutoStart =1",
+    "AutoExit =1",
+    "AddUpdates =1",
+    "Cleanup =1",
+    "NetFx3 =1",
+    "ResetBase =1"
 )
 $lines -join "`r`n" | Set-Content -Path $configPath -Encoding ASCII
-Write-Host "Created ConvertConfig.ini with updates, cleanup, ResetBase, and .NET 3.5"
+Write-Host "Created ConvertConfig.ini with [convert-UUP] header, updates, cleanup, ResetBase, and .NET 3.5"
 Write-Host "Config contents:"
 Get-Content $configPath | ForEach-Object { Write-Host "  $_" }
 
