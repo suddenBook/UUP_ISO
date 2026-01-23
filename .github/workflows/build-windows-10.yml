@@ -130,7 +130,7 @@ jobs:
             ## How to Extract
             Download all `.7z.xxx` files to the same folder, then run:
             ```
-            7z x ${{ steps.checksums.outputs.iso_filename }}.7z.001
+            7z x ${{ steps.split.outputs.iso_name }}.7z.001
             ```
 
             ## Checksums (SHA256)
