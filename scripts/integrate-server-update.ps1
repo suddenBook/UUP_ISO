@@ -276,8 +276,8 @@ Get-ChildItem $extractDir -Recurse -File | ForEach-Object {
 $outputIso = Join-Path $ConverterDir "ServerUpdated.iso"
 
 # Build BIOS + UEFI hybrid bootable ISO
-& $cdimage -bootdata:2#p0,e,b"$bootEtfs"#pEF,e,b"$bootEfi" `
-    -o -m -u2 -udfver102 -lSERVER2025 $extractDir $outputIso
+$bootdataArg = "-bootdata:2#p0,e,b${bootEtfs}#pEF,e,b${bootEfi}"
+& $cdimage $bootdataArg -o -m -u2 -udfver102 -lSERVER2025 $extractDir $outputIso
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cdimage failed with exit code $LASTEXITCODE"
