@@ -92,12 +92,12 @@ foreach ($m in $matches) {
 if ($updates.Count -eq 0) {
     # Fallback: try a simpler regex to extract IDs and titles
     $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>([^<]+)</a>')
+    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>(.*?)</a>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
     for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
         $updates += [PSCustomObject]@{
             GUID    = $idMatches[$i].Groups[1].Value
-            Title   = $titleMatches[$i].Groups[1].Value.Trim()
+            Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
             Product = ""
             Date    = ""
             Size    = ""
@@ -106,6 +106,11 @@ if ($updates.Count -eq 0) {
 }
 
 Write-Host "Found $($updates.Count) catalog entries"
+
+if ($updates.Count -gt 0) {
+    Write-Host "First 3 entries:"
+    $updates | Select-Object -First 3 | ForEach-Object { Write-Host "  [$($_.GUID)] $($_.Title)" }
+}
 
 if ($updates.Count -eq 0) {
     Write-Error "No updates found in Microsoft Update Catalog"
@@ -124,8 +129,19 @@ if ($filtered.Count -eq 0) {
     $filtered = $updates | Where-Object { $_.Title -match "Cumulative Update" }
 }
 
+if (-not $filtered -or $filtered.Count -eq 0) {
+    Write-Warning "Title filtering failed, using first catalog entry by GUID"
+    $filtered = $updates | Select-Object -First 1
+}
+
 # Take the first result (catalog returns newest first)
 $selectedUpdate = $filtered | Select-Object -First 1
+
+if (-not $selectedUpdate) {
+    Write-Error "Failed to select an update from catalog results"
+    exit 1
+}
+
 Write-Host "Selected update: $($selectedUpdate.Title)"
 Write-Host "  GUID: $($selectedUpdate.GUID)"
 
