@@ -240,6 +240,20 @@ try {
     Write-Warning "Attempting to continue - some updates may have been applied"
 }
 
+# Extract actual version from patched image registry
+Write-Host "Reading patched image version..."
+$softwareHive = Join-Path $mountDir "Windows\System32\config\SOFTWARE"
+& reg load "HKLM\OfflineImage" $softwareHive | Out-Null
+try {
+    $ntCurrent = Get-ItemProperty "HKLM:\OfflineImage\Microsoft\Windows NT\CurrentVersion"
+    $patchedBuild = $ntCurrent.CurrentBuildNumber
+    $patchedUBR = $ntCurrent.UBR
+    $patchedVersion = "${patchedBuild}.${patchedUBR}"
+    Write-Host "Patched image version: $patchedVersion"
+} finally {
+    & reg unload "HKLM\OfflineImage" | Out-Null
+}
+
 # Cleanup to reduce image size
 Write-Host "Running DISM cleanup with ResetBase..."
 & dism /Image:$mountDir /Cleanup-Image /StartComponentCleanup /ResetBase
@@ -289,13 +303,21 @@ if (-not (Test-Path $outputIso)) {
     exit 1
 }
 
-# Replace original ISO with updated one
+# Replace original ISO with updated one, renamed to reflect patched version
 $updatedSize = [math]::Round((Get-Item $outputIso).Length / 1GB, 2)
 Write-Host "Updated ISO size: ${updatedSize} GB"
 
 Remove-Item $iso.FullName -Force
-Move-Item $outputIso $iso.FullName
-Write-Host "Replaced original ISO with updated version"
+$newIsoName = "WindowsServer2025_${patchedVersion}_amd64_${Edition}.iso"
+$newIsoPath = Join-Path $ConverterDir $newIsoName
+Move-Item $outputIso $newIsoPath
+Write-Host "Created patched ISO: $newIsoName"
+
+# Set GitHub Actions output
+if ($env:GITHUB_OUTPUT) {
+    "patched_version=$patchedVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+    "patched_iso_name=$newIsoName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+}
 
 # Cleanup work directory
 Write-Host "Cleaning up work directory..."
@@ -303,5 +325,6 @@ Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "Cumulative update integration complete!"
-Write-Host "  ISO: $($iso.Name)"
+Write-Host "  ISO: $newIsoName"
+Write-Host "  Version: $patchedVersion"
 Write-Host "  Update: $($selectedUpdate.Title)"
