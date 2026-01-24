@@ -254,6 +254,12 @@ try {
     & reg unload "HKLM\OfflineImage" | Out-Null
 }
 
+# Dismount and remount to clear pending state before cleanup
+Write-Host "Dismounting WIM (saving changes)..."
+Dismount-WindowsImage -Path $mountDir -Save
+Write-Host "Remounting WIM for cleanup..."
+Mount-WindowsImage -ImagePath $wimPath -Index $targetIndex -Path $mountDir
+
 # Cleanup to reduce image size
 Write-Host "Running DISM cleanup with ResetBase..."
 & dism /Image:$mountDir /Cleanup-Image /StartComponentCleanup /ResetBase
