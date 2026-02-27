@@ -220,21 +220,37 @@ if (-not $files) {
 if ($fileResponse.response.appxPresent -eq $true) {
     Write-Host "Store App packages detected, fetching app file list..."
     $appUrl = "$baseUrl/get.php?id=$uuid&lang=neutral&edition=APP"
-    $appResponse = Invoke-RestMethod -Uri $appUrl -Method Get
+    $maxRetries = 3
+    $appFiles = $null
 
-    if (-not $appResponse.response.error) {
-        $appFiles = $appResponse.response.files
-        if ($appFiles) {
-            $appCount = 0
-            foreach ($prop in $appFiles.PSObject.Properties) {
-                $appCount++
-                $files | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        Write-Host "Waiting 10 seconds before API call (attempt $attempt/$maxRetries)..."
+        Start-Sleep -Seconds 10
+
+        try {
+            $appResponse = Invoke-RestMethod -Uri $appUrl -Method Get
+            if ($appResponse.response.error) {
+                Write-Warning "API returned error: $($appResponse.response.error)"
+            } else {
+                $appFiles = $appResponse.response.files
+                break
             }
-            Write-Host "Added $appCount app package files"
+        } catch {
+            Write-Warning "Request failed: $_"
         }
-    } else {
-        Write-Warning "Could not fetch app packages: $($appResponse.response.error)"
     }
+
+    if (-not $appFiles) {
+        Write-Error "Failed to fetch Store App packages after $maxRetries attempts"
+        exit 1
+    }
+
+    $appCount = 0
+    foreach ($prop in $appFiles.PSObject.Properties) {
+        $appCount++
+        $files | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+    }
+    Write-Host "Added $appCount app package files"
 }
 
 # Step 3: Generate aria2 input file
