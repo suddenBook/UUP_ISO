@@ -77,26 +77,38 @@ jobs:
           $url = "${{ inputs.drivers_url }}"
           New-Item -ItemType Directory -Path $driversDir -Force | Out-Null
 
-          # Try curl first (handles temp file hosts like temp.sh that need POST-style download)
-          Write-Host "Downloading drivers (trying curl)..."
-          curl.exe -L -f -o $zipPath $url
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zipPath)) {
-              Write-Host "curl failed, trying aria2c..."
+          function Test-Archive($path) {
+              if (-not (Test-Path $path)) { return $false }
+              if ((Get-Item $path).Length -lt 4) { return $false }
+              $h = [System.IO.File]::ReadAllBytes($path)[0..3]
+              return (($h[0] -eq 0x50 -and $h[1] -eq 0x4B) -or ($h[0] -eq 0x37 -and $h[1] -eq 0x7A))
+          }
+
+          $ok = $false
+
+          # 1) curl POST (temp file hosts like temp.sh serve files via POST)
+          Write-Host "Trying curl POST..."
+          curl.exe -L -f -X POST -o $zipPath $url 2>&1
+          if (Test-Archive $zipPath) { $ok = $true }
+
+          # 2) curl GET (direct download links, cloud storage, GitHub Releases, etc.)
+          if (-not $ok) {
+              Write-Host "POST didn't return a valid archive, trying curl GET..."
+              Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+              curl.exe -L -f -o $zipPath $url 2>&1
+              if (Test-Archive $zipPath) { $ok = $true }
+          }
+
+          # 3) aria2c GET (multi-connection fallback for large files)
+          if (-not $ok) {
+              Write-Host "curl GET didn't work either, trying aria2c..."
               Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
               aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "drivers.zip" $url
+              if (Test-Archive $zipPath) { $ok = $true }
           }
 
-          if (-not (Test-Path $zipPath)) {
-              Write-Error "Failed to download drivers from $url"
-              exit 1
-          }
-
-          # Validate it's a real archive, not an HTML page
-          $header = [System.IO.File]::ReadAllBytes($zipPath)[0..3]
-          $isZip = ($header[0] -eq 0x50 -and $header[1] -eq 0x4B)  # PK header
-          $is7z  = ($header[0] -eq 0x37 -and $header[1] -eq 0x7A)  # 7z header
-          if (-not $isZip -and -not $is7z) {
-              Write-Error "Downloaded file is not a valid archive (got HTML page?). Check your URL."
+          if (-not $ok) {
+              Write-Error "Failed to download a valid archive from $url (all methods tried)"
               exit 1
           }
 
