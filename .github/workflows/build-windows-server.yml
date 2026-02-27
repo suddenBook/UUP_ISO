@@ -73,12 +73,36 @@ jobs:
         shell: pwsh
         run: |
           $driversDir = "D:\drivers"
+          $zipPath = "D:\drivers.zip"
+          $url = "${{ inputs.drivers_url }}"
           New-Item -ItemType Directory -Path $driversDir -Force | Out-Null
-          Write-Host "Downloading drivers from ${{ inputs.drivers_url }}..."
-          aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "drivers.zip" "${{ inputs.drivers_url }}"
+
+          # Try curl first (handles temp file hosts like temp.sh that need POST-style download)
+          Write-Host "Downloading drivers (trying curl)..."
+          curl.exe -L -f -o $zipPath $url
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zipPath)) {
+              Write-Host "curl failed, trying aria2c..."
+              Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+              aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "drivers.zip" $url
+          }
+
+          if (-not (Test-Path $zipPath)) {
+              Write-Error "Failed to download drivers from $url"
+              exit 1
+          }
+
+          # Validate it's a real archive, not an HTML page
+          $header = [System.IO.File]::ReadAllBytes($zipPath)[0..3]
+          $isZip = ($header[0] -eq 0x50 -and $header[1] -eq 0x4B)  # PK header
+          $is7z  = ($header[0] -eq 0x37 -and $header[1] -eq 0x7A)  # 7z header
+          if (-not $isZip -and -not $is7z) {
+              Write-Error "Downloaded file is not a valid archive (got HTML page?). Check your URL."
+              exit 1
+          }
+
           Write-Host "Extracting drivers..."
-          7z x "D:\drivers.zip" -o"$driversDir" -y
-          Remove-Item "D:\drivers.zip" -Force
+          7z x $zipPath -o"$driversDir" -y
+          Remove-Item $zipPath -Force
           Write-Host "Drivers extracted to $driversDir"
           Get-ChildItem $driversDir -Recurse -Filter "*.inf" | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
 

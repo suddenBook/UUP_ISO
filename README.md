@@ -88,9 +88,17 @@ WinPE/
 
 ### Using the Driver Package
 
-1. Upload your zip file to any publicly accessible URL (e.g., a GitHub Release asset, cloud storage direct link, etc.)
+1. Upload your zip file to any publicly accessible URL
 2. When triggering the workflow, paste the URL into the **Drivers URL** field
 3. The workflow will download, extract, and integrate the drivers automatically
+
+[temp.sh](https://temp.sh) is a convenient no-signup temporary file hosting service (4 GB limit, files expire after 3 days). Upload with one command:
+
+```bash
+curl -F "file=@drivers.zip" https://temp.sh/upload
+```
+
+The returned URL can be pasted directly into the Drivers URL field. GitHub Release assets, cloud storage direct links, and other file hosting services also work.
 
 If the field is left empty, no drivers are integrated — same as the default behavior.
 
