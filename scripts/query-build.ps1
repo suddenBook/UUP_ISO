@@ -227,8 +227,15 @@ if ($Language -ne "en-us") {
         $enResponse = Invoke-RestMethod -Uri $enUrl -Method Get
         if (-not $enResponse.response.error) {
             $enFiles = $enResponse.response.files
+            # Only add language packs and feature cabs, skip the edition ESD
+            # (e.g., professional_en-us.esd) to keep the user's chosen language as primary
+            $editionEsd = "$($Edition.ToLower())_en-us.esd"
             $enCount = 0
             foreach ($prop in $enFiles.PSObject.Properties) {
+                if ($prop.Name -eq $editionEsd) {
+                    Write-Host "Skipping $($prop.Name) (would override primary language)"
+                    continue
+                }
                 if (-not ($files.PSObject.Properties.Name -contains $prop.Name)) {
                     $files | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
                     $enCount++
