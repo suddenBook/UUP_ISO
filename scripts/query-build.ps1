@@ -216,7 +216,35 @@ if (-not $files) {
     exit 1
 }
 
-# Step 2b: Get Store App packages if available
+# Step 2b: Add en-us language pack if primary language is not en-us
+if ($Language -ne "en-us") {
+    Write-Host "Adding en-us language pack alongside primary language ($Language)..."
+    Write-Host "Waiting 10 seconds before API call..."
+    Start-Sleep -Seconds 10
+
+    $enUrl = "$baseUrl/get.php?id=$uuid&lang=en-us&edition=$Edition"
+    try {
+        $enResponse = Invoke-RestMethod -Uri $enUrl -Method Get
+        if (-not $enResponse.response.error) {
+            $enFiles = $enResponse.response.files
+            $enCount = 0
+            foreach ($prop in $enFiles.PSObject.Properties) {
+                if (-not ($files.PSObject.Properties.Name -contains $prop.Name)) {
+                    $files | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
+                    $enCount++
+                }
+            }
+            Write-Host "Added $enCount en-us language files"
+        } else {
+            Write-Warning "Could not fetch en-us files: $($enResponse.response.error)"
+        }
+    } catch {
+        Write-Warning "Failed to fetch en-us language pack: $_"
+        Write-Warning "Continuing with primary language only"
+    }
+}
+
+# Step 2c: Get Store App packages if available
 if ($fileResponse.response.appxPresent -eq $true) {
     Write-Host "Store App packages detected, fetching app file list..."
     $appUrl = "$baseUrl/get.php?id=$uuid&lang=neutral&edition=APP"
