@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$ConverterDir,
-    [Parameter(Mandatory)][string]$UUPDir
+    [Parameter(Mandatory)][string]$UUPDir,
+    [string]$DriversDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +65,23 @@ $lines = @(
     "vAutoEditions=0",
     "vSortEditions=0"
 )
+# Enable driver integration if drivers directory is provided and contains .inf files
+if ($DriversDir -and (Test-Path $DriversDir)) {
+    $infFiles = Get-ChildItem $DriversDir -Filter "*.inf" -Recurse
+    if ($infFiles.Count -gt 0) {
+        $lines = $lines -replace 'AddDrivers=0', 'AddDrivers=1'
+        Write-Host "Driver integration enabled: found $($infFiles.Count) .inf files in $DriversDir"
+
+        # Copy drivers to converter's Drivers folder (expects OS/, ALL/, WinPE/ subfolders)
+        $converterDrvDir = Join-Path $ConverterDir "Drivers"
+        New-Item -ItemType Directory -Path $converterDrvDir -Force | Out-Null
+        Copy-Item -Path "$DriversDir\*" -Destination $converterDrvDir -Recurse -Force
+        Write-Host "Copied driver files to $converterDrvDir"
+    } else {
+        Write-Host "Drivers directory provided but no .inf files found, skipping driver integration"
+    }
+}
+
 $lines -join "`r`n" | Set-Content -Path $configPath -Encoding ASCII
 Write-Host "Created ConvertConfig.ini with [convert-UUP] header, updates, cleanup, ResetBase, and .NET 3.5"
 Write-Host "Config contents:"

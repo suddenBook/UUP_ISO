@@ -14,6 +14,10 @@ on:
           - PROFESSIONAL
           - CORE
         default: 'PROFESSIONAL'
+      drivers_url:
+        description: 'URL to drivers zip (optional, must contain OS/ ALL/ or WinPE/ subfolders with .inf drivers)'
+        type: string
+        default: ''
 
 jobs:
   build-iso:
@@ -62,12 +66,31 @@ jobs:
           Remove-Item "D:\batutil_extract" -Recurse -Force
           Write-Host "Converter ready at $converterDir"
 
+      - name: Download drivers
+        if: inputs.drivers_url != ''
+        shell: pwsh
+        run: |
+          $driversDir = "D:\drivers"
+          New-Item -ItemType Directory -Path $driversDir -Force | Out-Null
+          Write-Host "Downloading drivers from ${{ inputs.drivers_url }}..."
+          aria2c --max-connection-per-server=16 --split=16 -d "D:\" -o "drivers.zip" "${{ inputs.drivers_url }}"
+          Write-Host "Extracting drivers..."
+          7z x "D:\drivers.zip" -o"$driversDir" -y
+          Remove-Item "D:\drivers.zip" -Force
+          Write-Host "Drivers extracted to $driversDir"
+          Get-ChildItem $driversDir -Recurse -Filter "*.inf" | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
+
       - name: Convert to ISO
         shell: pwsh
         run: |
-          .\scripts\convert-to-iso.ps1 `
-            -ConverterDir "D:\converter" `
-            -UUPDir "D:\UUPs"
+          $params = @{
+            ConverterDir = "D:\converter"
+            UUPDir       = "D:\UUPs"
+          }
+          if (Test-Path "D:\drivers") {
+            $params.DriversDir = "D:\drivers"
+          }
+          .\scripts\convert-to-iso.ps1 @params
 
       - name: Split ISO with 7z
         id: split

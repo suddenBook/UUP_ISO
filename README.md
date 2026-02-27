@@ -12,8 +12,10 @@ A GitHub Actions workflow that builds Windows ISOs from UUP (Unified Update Plat
 
 - Fetches the latest builds from UUP dump (always uses Feature Updates, never Cumulative Updates)
 - Integrates cumulative updates into the image
+- Includes all pre-installed Microsoft Store apps (Windows Terminal, Calculator, Photos, etc.)
 - Runs DISM component cleanup and ResetBase for smaller images
 - Integrates .NET Framework 3.5
+- Optional driver integration via URL at build time
 - Splits the final ISO into 1.9 GB 7z parts for GitHub Releases
 - Fully automated — no manual interaction required
 
@@ -31,7 +33,8 @@ A GitHub Actions workflow that builds Windows ISOs from UUP (Unified Update Plat
 | Milestone | 25H2, 24H2 | 25H2 | Windows 11 Retail/RP only |
 | Architecture | amd64, arm64 | amd64 | |
 | Language | Free text | en-us | e.g., `zh-cn`, `de-de` |
-| Edition | PROFESSIONAL, CORE, SERVERSTANDARD, SERVERSTANDARDCORE, SERVERDATACENTER, SERVERDATACENTERCORE | PROFESSIONAL | Client editions for Win10/11; Server editions for Server |
+| Edition | PROFESSIONAL, CORE, SERVERSTANDARD, etc. | PROFESSIONAL | Client editions for Win10/11; Server editions for Server |
+| Drivers URL | URL to a zip file | *(empty)* | Optional, see [Driver Integration](#driver-integration) |
 
 5. Wait for the workflow to complete (~1-3 hours)
 6. Download the split 7z files from the **Releases** page
@@ -45,6 +48,51 @@ Download all `.7z.xxx` files to the same folder, then extract:
 ```
 
 This produces the full bootable ISO file.
+
+## Driver Integration
+
+You can integrate hardware drivers into the ISO by providing a URL to a zip file when triggering the workflow. The zip is downloaded at build time and is **not** stored in the repository, so forked repos stay clean.
+
+### Preparing a Driver Package
+
+1. Download the template zip from [`drivers-template.zip`](drivers-template.zip) included in this repository
+2. Place your driver files into the appropriate subfolder:
+
+| Folder | Injected into | Use case |
+|--------|--------------|----------|
+| `OS/` | `install.wim` only | Most hardware drivers (GPU, audio, chipset, etc.) |
+| `WinPE/` | `boot.wim` / `winre.wim` only | Drivers needed during installation (storage controllers, NIC) |
+| `ALL/` | All images | Drivers needed everywhere |
+
+3. Each driver must be a complete INF driver package (`.inf` + `.sys` + `.cat` and any other referenced files). Only signed drivers are accepted.
+4. Subdirectory nesting is fine — DISM scans recursively.
+
+Example structure inside the zip:
+
+```
+OS/
+  gpu-driver/
+    nvidia.inf
+    nvidia.sys
+    nvidia.cat
+WinPE/
+  nvme-controller/
+    stornvme.inf
+    stornvme.sys
+    stornvme.cat
+```
+
+### Exporting Drivers from an Existing System
+
+[DriverStoreExplorer (RAPR)](https://github.com/lostindark/DriverStoreExplorer) is a handy open-source tool for browsing and exporting drivers from the Windows Driver Store. You can use it to select and export specific drivers, then organize the exported folders into the `OS/` or `WinPE/` structure described above.
+
+### Using the Driver Package
+
+1. Upload your zip file to any publicly accessible URL (e.g., a GitHub Release asset, cloud storage direct link, etc.)
+2. When triggering the workflow, paste the URL into the **Drivers URL** field
+3. The workflow will download, extract, and integrate the drivers automatically
+
+If the field is left empty, no drivers are integrated — same as the default behavior.
 
 ## How It Works
 

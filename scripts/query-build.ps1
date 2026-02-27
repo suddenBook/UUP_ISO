@@ -216,6 +216,27 @@ if (-not $files) {
     exit 1
 }
 
+# Step 2b: Get Store App packages if available
+if ($fileResponse.response.appxPresent -eq $true) {
+    Write-Host "Store App packages detected, fetching app file list..."
+    $appUrl = "$baseUrl/get.php?id=$uuid&lang=neutral&edition=APP"
+    $appResponse = Invoke-RestMethod -Uri $appUrl -Method Get
+
+    if (-not $appResponse.response.error) {
+        $appFiles = $appResponse.response.files
+        if ($appFiles) {
+            $appCount = 0
+            foreach ($prop in $appFiles.PSObject.Properties) {
+                $appCount++
+                $files | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+            }
+            Write-Host "Added $appCount app package files"
+        }
+    } else {
+        Write-Warning "Could not fetch app packages: $($appResponse.response.error)"
+    }
+}
+
 # Step 3: Generate aria2 input file
 $aria2File = "D:\aria2_download_list.txt"
 $fileCount = 0
