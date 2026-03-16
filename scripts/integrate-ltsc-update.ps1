@@ -14,33 +14,64 @@ Add-Type -AssemblyName System.Web
 # --- Helper: Search Microsoft Update Catalog ---
 
 function Search-UpdateCatalog {
-    param([string]$Query)
+    param([string]$Query, [int]$MaxRetries = 3)
 
     $searchUrl = "https://www.catalog.update.microsoft.com/Search.aspx"
-    $response = Invoke-WebRequest -Uri $searchUrl -Method Post `
-        -Body "q=$([System.Web.HttpUtility]::UrlEncode($Query))" `
-        -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+    $headers = @{ "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
 
-    if ($response.StatusCode -ne 200) {
-        Write-Error "Catalog search failed with status $($response.StatusCode)"
-        return @()
-    }
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        Write-Host "Catalog search attempt $attempt/$MaxRetries..."
+        try {
+            $response = Invoke-WebRequest -Uri $searchUrl -Method Post `
+                -Body "q=$([System.Web.HttpUtility]::UrlEncode($Query))" `
+                -ContentType "application/x-www-form-urlencoded" `
+                -Headers $headers -UseBasicParsing
 
-    $html = $response.Content
+            if ($response.StatusCode -ne 200) {
+                Write-Warning "Catalog returned status $($response.StatusCode)"
+                Start-Sleep -Seconds (30 * $attempt)
+                continue
+            }
 
-    # Extract GUIDs and titles from <a> tags (titles live inside <a>, not <td>)
-    $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
-        [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            $html = $response.Content
+            Write-Host "Response size: $($html.Length) chars"
 
-    $results = @()
-    for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
-        $results += [PSCustomObject]@{
-            GUID  = $idMatches[$i].Groups[1].Value
-            Title = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+            # Extract GUIDs and titles from <a> tags (titles live inside <a>, not <td>)
+            $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
+            $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+                [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+            Write-Host "Regex matches: $($idMatches.Count) GUIDs, $($titleMatches.Count) titles"
+
+            if ($idMatches.Count -eq 0) {
+                # Check for common catalog issues
+                if ($html -match "catalog\.s\.download\.windowsupdate\.com") {
+                    Write-Host "Page appears to contain results but regex didn't match"
+                }
+                if ($html.Length -lt 5000) {
+                    Write-Warning "Response too short, catalog may be blocking or rate-limiting"
+                }
+                Write-Warning "No results found, retrying in $(30 * $attempt)s..."
+                Start-Sleep -Seconds (30 * $attempt)
+                continue
+            }
+
+            $results = @()
+            for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
+                $results += [PSCustomObject]@{
+                    GUID  = $idMatches[$i].Groups[1].Value
+                    Title = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+                }
+            }
+            return $results
+        } catch {
+            Write-Warning "Catalog request failed: $_"
+            Start-Sleep -Seconds (30 * $attempt)
         }
     }
-    return $results
+
+    Write-Warning "Catalog search failed after $MaxRetries attempts"
+    return @()
 }
 
 # --- Helper: Get download URLs for a catalog entry ---

@@ -55,37 +55,55 @@ New-Item -ItemType Directory -Path $updateDir -Force | Out-Null
 $searchQuery = "Cumulative Update for Microsoft server operating system, version 24H2 for x64-based Systems"
 Write-Host "Searching Microsoft Update Catalog for: $searchQuery"
 
-# Search the catalog
-$searchUrl = "https://www.catalog.update.microsoft.com/Search.aspx"
-$body = "q=$([System.Web.HttpUtility]::UrlEncode($searchQuery))"
-
 # Load System.Web for URL encoding
 Add-Type -AssemblyName System.Web
 
-$response = Invoke-WebRequest -Uri $searchUrl -Method Post -Body "q=$([System.Web.HttpUtility]::UrlEncode($searchQuery))" `
-    -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
-
-if ($response.StatusCode -ne 200) {
-    Write-Error "Catalog search failed with status $($response.StatusCode)"
-    exit 1
-}
-
-# Parse results from the HTML table
-$html = $response.Content
-
-# Extract GUIDs and titles from <a> tags (titles live inside <a>, not raw <td>)
+# Search the catalog (with retry for flaky responses)
+$searchUrl = "https://www.catalog.update.microsoft.com/Search.aspx"
+$headers = @{ "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
 $updates = @()
-$idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-$titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
-    [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
-for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
-    $updates += [PSCustomObject]@{
-        GUID    = $idMatches[$i].Groups[1].Value
-        Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
-        Product = ""
-        Date    = ""
-        Size    = ""
+for ($searchAttempt = 1; $searchAttempt -le 3; $searchAttempt++) {
+    Write-Host "Catalog search attempt $searchAttempt/3..."
+    try {
+        $response = Invoke-WebRequest -Uri $searchUrl -Method Post `
+            -Body "q=$([System.Web.HttpUtility]::UrlEncode($searchQuery))" `
+            -ContentType "application/x-www-form-urlencoded" `
+            -Headers $headers -UseBasicParsing
+
+        if ($response.StatusCode -ne 200) {
+            Write-Warning "Catalog returned status $($response.StatusCode)"
+            Start-Sleep -Seconds (30 * $searchAttempt)
+            continue
+        }
+
+        $html = $response.Content
+        Write-Host "Response size: $($html.Length) chars"
+
+        $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
+        $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+            [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+        Write-Host "Regex matches: $($idMatches.Count) GUIDs, $($titleMatches.Count) titles"
+
+        if ($idMatches.Count -gt 0 -and $titleMatches.Count -gt 0) {
+            for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
+                $updates += [PSCustomObject]@{
+                    GUID    = $idMatches[$i].Groups[1].Value
+                    Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+                    Product = ""
+                    Date    = ""
+                    Size    = ""
+                }
+            }
+            break
+        }
+
+        Write-Warning "No results found, retrying in $(30 * $searchAttempt)s..."
+        Start-Sleep -Seconds (30 * $searchAttempt)
+    } catch {
+        Write-Warning "Catalog request failed: $_"
+        Start-Sleep -Seconds (30 * $searchAttempt)
     }
 }
 
