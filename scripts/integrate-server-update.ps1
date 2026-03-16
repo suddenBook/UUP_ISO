@@ -80,17 +80,18 @@ for ($searchAttempt = 1; $searchAttempt -le 3; $searchAttempt++) {
         $html = $response.Content
         Write-Host "Response size: $($html.Length) chars"
 
-        $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-        $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+        # Extract GUID + title from the same <a> tag containing goToDetails
+        $pattern = '<a[^>]*goToDetails\("([a-f0-9\-]+)"\)[^>]*>\s*(.*?)\s*</a>'
+        $catalogMatches = [regex]::Matches($html, $pattern, `
             [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
-        Write-Host "Regex matches: $($idMatches.Count) GUIDs, $($titleMatches.Count) titles"
+        Write-Host "Catalog matches: $($catalogMatches.Count)"
 
-        if ($idMatches.Count -gt 0 -and $titleMatches.Count -gt 0) {
-            for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
+        if ($catalogMatches.Count -gt 0) {
+            foreach ($m in $catalogMatches) {
                 $updates += [PSCustomObject]@{
-                    GUID    = $idMatches[$i].Groups[1].Value
-                    Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+                    GUID    = $m.Groups[1].Value
+                    Title   = ($m.Groups[2].Value -replace '<[^>]+>', '').Trim()
                     Product = ""
                     Date    = ""
                     Size    = ""

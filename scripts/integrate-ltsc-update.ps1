@@ -36,18 +36,14 @@ function Search-UpdateCatalog {
             $html = $response.Content
             Write-Host "Response size: $($html.Length) chars"
 
-            # Extract GUIDs and titles from <a> tags (titles live inside <a>, not <td>)
-            $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-            $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+            # Extract GUID + title from the same <a> tag containing goToDetails
+            $pattern = '<a[^>]*goToDetails\("([a-f0-9\-]+)"\)[^>]*>\s*(.*?)\s*</a>'
+            $catalogMatches = [regex]::Matches($html, $pattern, `
                 [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
-            Write-Host "Regex matches: $($idMatches.Count) GUIDs, $($titleMatches.Count) titles"
+            Write-Host "Catalog matches: $($catalogMatches.Count)"
 
-            if ($idMatches.Count -eq 0) {
-                # Check for common catalog issues
-                if ($html -match "catalog\.s\.download\.windowsupdate\.com") {
-                    Write-Host "Page appears to contain results but regex didn't match"
-                }
+            if ($catalogMatches.Count -eq 0) {
                 if ($html.Length -lt 5000) {
                     Write-Warning "Response too short, catalog may be blocking or rate-limiting"
                 }
@@ -57,10 +53,10 @@ function Search-UpdateCatalog {
             }
 
             $results = @()
-            for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
+            foreach ($m in $catalogMatches) {
                 $results += [PSCustomObject]@{
-                    GUID  = $idMatches[$i].Groups[1].Value
-                    Title = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+                    GUID  = $m.Groups[1].Value
+                    Title = ($m.Groups[2].Value -replace '<[^>]+>', '').Trim()
                 }
             }
             return $results
