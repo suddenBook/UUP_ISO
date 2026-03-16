@@ -71,37 +71,21 @@ if ($response.StatusCode -ne 200) {
 }
 
 # Parse results from the HTML table
-# Each row has: title, products, classification, last updated, version, size
 $html = $response.Content
 
-# Extract update entries: id and title from the result rows
+# Extract GUIDs and titles from <a> tags (titles live inside <a>, not raw <td>)
 $updates = @()
-$rowPattern = 'goToDetails\("([a-f0-9\-]+)"\).*?<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>'
-$matches = [regex]::Matches($html, $rowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+$idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
+$titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+    [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
-foreach ($m in $matches) {
+for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
     $updates += [PSCustomObject]@{
-        GUID    = $m.Groups[1].Value
-        Title   = $m.Groups[2].Value.Trim()
-        Product = $m.Groups[3].Value.Trim()
-        Date    = $m.Groups[4].Value.Trim()
-        Size    = $m.Groups[5].Value.Trim()
-    }
-}
-
-if ($updates.Count -eq 0) {
-    # Fallback: try a simpler regex to extract IDs and titles
-    $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>(.*?)</a>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
-
-    for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
-        $updates += [PSCustomObject]@{
-            GUID    = $idMatches[$i].Groups[1].Value
-            Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
-            Product = ""
-            Date    = ""
-            Size    = ""
-        }
+        GUID    = $idMatches[$i].Groups[1].Value
+        Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+        Product = ""
+        Date    = ""
+        Size    = ""
     }
 }
 

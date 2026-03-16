@@ -9,6 +9,35 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-ApiWithRetry {
+    param(
+        [string]$Uri,
+        [int]$MaxRetries = 5,
+        [int]$BaseDelaySec = 15
+    )
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        try {
+            $resp = Invoke-RestMethod -Uri $Uri -Method Get
+        } catch {
+            if ($_.ErrorDetails.Message -match "RATE_LIMITED") {
+                $delay = $BaseDelaySec * $attempt
+                Write-Warning "Rate limited (attempt $attempt/$MaxRetries), waiting ${delay}s..."
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            throw
+        }
+        if ($resp.response.error -eq "USER_RATE_LIMITED") {
+            $delay = $BaseDelaySec * $attempt
+            Write-Warning "Rate limited (attempt $attempt/$MaxRetries), waiting ${delay}s..."
+            Start-Sleep -Seconds $delay
+            continue
+        }
+        return $resp
+    }
+    throw "API still rate limited after $MaxRetries attempts on $Uri"
+}
+
 # Validate product
 if ($Product -notin @("Windows 11", "Windows 10", "Windows Server")) {
     Write-Error "Invalid product: '$Product'. Must be 'Windows 11', 'Windows 10', or 'Windows Server'"
@@ -58,7 +87,7 @@ if ($Product -eq "Windows 10") {
     # Windows 10: always use Feature Update for 22H2
     Write-Host "Querying listid API for Windows 10 22H2 Feature Update..."
     $searchUrl = "$baseUrl/listid.php?search=Feature+update+to+Windows+10%2C+version+22H2&sortByDate=1"
-    $response = Invoke-RestMethod -Uri $searchUrl -Method Get
+    $response = Invoke-ApiWithRetry -Uri $searchUrl
 
     if ($response.response.error) {
         Write-Error "API error: $($response.response.error)"
@@ -95,7 +124,7 @@ elseif ($Product -eq "Windows Server") {
     # Windows Server: always use Server 2025 (24H2)
     Write-Host "Querying listid API for Windows Server 2025..."
     $searchUrl = "$baseUrl/listid.php?search=Windows+Server+2025&sortByDate=1"
-    $response = Invoke-RestMethod -Uri $searchUrl -Method Get
+    $response = Invoke-ApiWithRetry -Uri $searchUrl
 
     if ($response.response.error) {
         Write-Error "API error: $($response.response.error)"
@@ -176,7 +205,7 @@ else {
             Write-Host "URL: $tryUrl"
 
             try {
-                $response = Invoke-RestMethod -Uri $tryUrl -Method Get
+                $response = Invoke-ApiWithRetry -Uri $tryUrl
             } catch {
                 Write-Warning "Request failed: $_"
                 continue
@@ -211,7 +240,7 @@ else {
         # Insider channels (Beta/Dev/Canary): no build parameter needed
         Write-Host "Querying fetchupd API for $Channel channel (ring: $ring)..."
         Write-Host "URL: $fetchUrl"
-        $response = Invoke-RestMethod -Uri $fetchUrl -Method Get
+        $response = Invoke-ApiWithRetry -Uri $fetchUrl
 
         if ($response.response.error) {
             Write-Error "API error: $($response.response.error)"
@@ -250,7 +279,7 @@ else {
 Write-Host ""
 Write-Host "Fetching file list for UUID: $uuid..."
 $getUrl = "$baseUrl/get.php?id=$uuid&lang=$Language&edition=$Edition"
-$fileResponse = Invoke-RestMethod -Uri $getUrl -Method Get
+$fileResponse = Invoke-ApiWithRetry -Uri $getUrl
 
 if ($fileResponse.response.error) {
     Write-Error "API error getting files: $($fileResponse.response.error)"
@@ -271,7 +300,7 @@ if ($Language -ne "en-us") {
 
     $enUrl = "$baseUrl/get.php?id=$uuid&lang=en-us&edition=$Edition"
     try {
-        $enResponse = Invoke-RestMethod -Uri $enUrl -Method Get
+        $enResponse = Invoke-ApiWithRetry -Uri $enUrl
         if (-not $enResponse.response.error) {
             $enFiles = $enResponse.response.files
             # Only add language packs and feature cabs, skip the edition ESD
@@ -310,7 +339,7 @@ if ($fileResponse.response.appxPresent -eq $true) {
         Start-Sleep -Seconds 10
 
         try {
-            $appResponse = Invoke-RestMethod -Uri $appUrl -Method Get
+            $appResponse = Invoke-ApiWithRetry -Uri $appUrl
             if ($appResponse.response.error) {
                 Write-Warning "API returned error: $($appResponse.response.error)"
             } else {

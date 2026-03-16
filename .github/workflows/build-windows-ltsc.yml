@@ -15,6 +15,10 @@ on:
         description: 'URL to drivers zip (optional, must contain OS/ ALL/ or WinPE/ subfolders with .inf drivers)'
         type: string
         default: ''
+      vp9_url:
+        description: 'URL to VP9VideoExtensions .appxbundle (optional, fixes Settings > Video Playback preview error)'
+        type: string
+        default: ''
 
 jobs:
   build-iso:
@@ -127,7 +131,29 @@ jobs:
           Write-Host "Drivers extracted to $driversDir"
           Get-ChildItem $driversDir -Recurse -Filter "*.inf" | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
 
-      - name: Integrate latest cumulative update
+      - name: Download VP9 Video Extensions
+        if: inputs.vp9_url != ''
+        shell: pwsh
+        run: |
+          $vp9Dir = "D:\vp9"
+          $url = "${{ inputs.vp9_url }}"
+          New-Item -ItemType Directory -Path $vp9Dir -Force | Out-Null
+
+          Write-Host "Downloading VP9 Video Extensions..."
+          curl.exe -L -f -o "$vp9Dir\vp9.appxbundle" $url 2>&1
+          if (-not (Test-Path "$vp9Dir\vp9.appxbundle") -or (Get-Item "$vp9Dir\vp9.appxbundle").Length -lt 1MB) {
+              Remove-Item "$vp9Dir\vp9.appxbundle" -Force -ErrorAction SilentlyContinue
+              aria2c --max-connection-per-server=16 --split=16 -d $vp9Dir -o "vp9.appxbundle" $url
+          }
+
+          if (Test-Path "$vp9Dir\vp9.appxbundle") {
+              $size = [math]::Round((Get-Item "$vp9Dir\vp9.appxbundle").Length / 1MB, 1)
+              Write-Host "VP9 downloaded: ${size} MB"
+          } else {
+              Write-Warning "VP9 download failed, will continue without it"
+          }
+
+      - name: Integrate updates
         id: integrate
         shell: pwsh
         run: |
@@ -138,6 +164,9 @@ jobs:
           }
           if (Test-Path "D:\drivers") {
             $params.DriversDir = "D:\drivers"
+          }
+          if (Test-Path "D:\vp9\vp9.appxbundle") {
+            $params.VP9AppxPath = "D:\vp9\vp9.appxbundle"
           }
           .\scripts\integrate-ltsc-update.ps1 @params
 
@@ -197,7 +226,7 @@ jobs:
             - **Architecture:** amd64
             - **Language:** ${{ inputs.language }}
             - **Editions:** ${{ steps.integrate.outputs.editions }}
-            - **Options:** Latest CU integrated, Drivers integrated, Component cleanup
+            - **Options:** Latest CU integrated, .NET 3.5 enabled, .NET CU integrated, Component cleanup
             - **Base ISO:** LTSC 2024 (26100.1742)
 
             ## How to Extract

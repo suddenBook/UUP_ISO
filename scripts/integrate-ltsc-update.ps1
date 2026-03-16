@@ -2,10 +2,61 @@ param(
     [Parameter(Mandatory)][string]$BaseIsoPath,
     [Parameter(Mandatory)][string]$ConverterDir,
     [Parameter(Mandatory)][string]$WorkDir,
-    [string]$DriversDir
+    [string]$DriversDir,
+    [string]$VP9AppxPath
 )
 
 $ErrorActionPreference = "Stop"
+
+# Load System.Web for URL encoding
+Add-Type -AssemblyName System.Web
+
+# --- Helper: Search Microsoft Update Catalog ---
+
+function Search-UpdateCatalog {
+    param([string]$Query)
+
+    $searchUrl = "https://www.catalog.update.microsoft.com/Search.aspx"
+    $response = Invoke-WebRequest -Uri $searchUrl -Method Post `
+        -Body "q=$([System.Web.HttpUtility]::UrlEncode($Query))" `
+        -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
+
+    if ($response.StatusCode -ne 200) {
+        Write-Error "Catalog search failed with status $($response.StatusCode)"
+        return @()
+    }
+
+    $html = $response.Content
+
+    # Extract GUIDs and titles from <a> tags (titles live inside <a>, not <td>)
+    $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
+    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>\s*(.*?)\s*</a>', `
+        [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+    $results = @()
+    for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
+        $results += [PSCustomObject]@{
+            GUID  = $idMatches[$i].Groups[1].Value
+            Title = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
+        }
+    }
+    return $results
+}
+
+# --- Helper: Get download URLs for a catalog entry ---
+
+function Get-CatalogDownloadUrls {
+    param([string]$GUID)
+
+    $downloadUrl = "https://www.catalog.update.microsoft.com/DownloadDialog.aspx"
+    $postBody = @{ updateIDs = "[{`"size`":0,`"languages`":`"`",`"uidInfo`":`"$GUID`",`"updateID`":`"$GUID`"}]" }
+
+    $dlResponse = Invoke-WebRequest -Uri $downloadUrl -Method Post -Body $postBody -UseBasicParsing
+    $dlHtml = $dlResponse.Content
+
+    $urlMatches = [regex]::Matches($dlHtml, "https?://[^'""]+\.(msu|cab)")
+    return ($urlMatches | ForEach-Object { $_.Value } | Select-Object -Unique)
+}
 
 # --- Step 0: Validate inputs ---
 
@@ -38,64 +89,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "ISO extracted"
 
-# --- Step 2: Search Microsoft Update Catalog for latest Windows 11 24H2 LCU ---
+# --- Step 2: Search and download OS cumulative update ---
 
-$updateDir = Join-Path $WorkDir "updates"
-New-Item -ItemType Directory -Path $updateDir -Force | Out-Null
+$cuDir = Join-Path $WorkDir "cu_updates"
+New-Item -ItemType Directory -Path $cuDir -Force | Out-Null
 
 $searchQuery = "Cumulative Update for Windows 11 Version 24H2 for x64-based Systems"
 Write-Host "Searching Microsoft Update Catalog for: $searchQuery"
 
-# Load System.Web for URL encoding
-Add-Type -AssemblyName System.Web
-
-$searchUrl = "https://www.catalog.update.microsoft.com/Search.aspx"
-$response = Invoke-WebRequest -Uri $searchUrl -Method Post -Body "q=$([System.Web.HttpUtility]::UrlEncode($searchQuery))" `
-    -ContentType "application/x-www-form-urlencoded" -UseBasicParsing
-
-if ($response.StatusCode -ne 200) {
-    Write-Error "Catalog search failed with status $($response.StatusCode)"
-    exit 1
-}
-
-# Parse results from the HTML table
-$html = $response.Content
-
-$updates = @()
-$rowPattern = 'goToDetails\("([a-f0-9\-]+)"\).*?<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>([^<]+)</td>'
-$matches = [regex]::Matches($html, $rowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-
-foreach ($m in $matches) {
-    $updates += [PSCustomObject]@{
-        GUID    = $m.Groups[1].Value
-        Title   = $m.Groups[2].Value.Trim()
-        Product = $m.Groups[3].Value.Trim()
-        Date    = $m.Groups[4].Value.Trim()
-        Size    = $m.Groups[5].Value.Trim()
-    }
-}
-
-if ($updates.Count -eq 0) {
-    # Fallback: try a simpler regex to extract IDs and titles
-    $idMatches = [regex]::Matches($html, 'goToDetails\("([a-f0-9\-]+)"\)')
-    $titleMatches = [regex]::Matches($html, '<a[^>]*id="[^"]*_link"[^>]*>(.*?)</a>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
-
-    for ($i = 0; $i -lt [Math]::Min($idMatches.Count, $titleMatches.Count); $i++) {
-        $updates += [PSCustomObject]@{
-            GUID    = $idMatches[$i].Groups[1].Value
-            Title   = ($titleMatches[$i].Groups[1].Value -replace '<[^>]+>', '').Trim()
-            Product = ""
-            Date    = ""
-            Size    = ""
-        }
-    }
-}
-
+$updates = Search-UpdateCatalog -Query $searchQuery
 Write-Host "Found $($updates.Count) catalog entries"
 
 if ($updates.Count -gt 0) {
-    Write-Host "First 3 entries:"
-    $updates | Select-Object -First 3 | ForEach-Object { Write-Host "  [$($_.GUID)] $($_.Title)" }
+    Write-Host "First 5 entries:"
+    $updates | Select-Object -First 5 | ForEach-Object { Write-Host "  [$($_.GUID)] $($_.Title)" }
 }
 
 if ($updates.Count -eq 0) {
@@ -103,81 +110,108 @@ if ($updates.Count -eq 0) {
     exit 1
 }
 
-# Filter: exclude Preview and Out-of-Band updates
+# Filter: non-Preview, non-Out-of-Band cumulative updates
 $filtered = $updates | Where-Object {
     $_.Title -notmatch "Preview" -and
     $_.Title -notmatch "Out-of-Band" -and
     $_.Title -match "Cumulative Update"
 }
 
-if ($filtered.Count -eq 0) {
-    Write-Warning "No non-Preview updates found after filtering, using all results"
-    $filtered = $updates | Where-Object { $_.Title -match "Cumulative Update" }
-}
-
 if (-not $filtered -or $filtered.Count -eq 0) {
-    Write-Warning "Title filtering failed, using first catalog entry by GUID"
+    Write-Warning "Filtering failed, using first catalog entry"
     $filtered = $updates | Select-Object -First 1
 }
 
-# Take the first result (catalog returns newest first)
-$selectedUpdate = $filtered | Select-Object -First 1
+$selectedCU = $filtered | Select-Object -First 1
+Write-Host "Selected CU: $($selectedCU.Title)"
+Write-Host "  GUID: $($selectedCU.GUID)"
 
-if (-not $selectedUpdate) {
-    Write-Error "Failed to select an update from catalog results"
+# Get download URLs
+$cuUrls = Get-CatalogDownloadUrls -GUID $selectedCU.GUID
+
+if ($cuUrls.Count -eq 0) {
+    Write-Error "No download URLs found for CU $($selectedCU.GUID)"
     exit 1
 }
 
-Write-Host "Selected update: $($selectedUpdate.Title)"
-Write-Host "  GUID: $($selectedUpdate.GUID)"
+Write-Host "Found $($cuUrls.Count) download URL(s)"
 
-# --- Get download URLs from DownloadDialog ---
-
-$downloadUrl = "https://www.catalog.update.microsoft.com/DownloadDialog.aspx"
-$postBody = @{ updateIDs = "[{`"size`":0,`"languages`":`"`",`"uidInfo`":`"$($selectedUpdate.GUID)`",`"updateID`":`"$($selectedUpdate.GUID)`"}]" }
-
-$dlResponse = Invoke-WebRequest -Uri $downloadUrl -Method Post -Body $postBody -UseBasicParsing
-$dlHtml = $dlResponse.Content
-
-# Extract download URLs from the JavaScript response
-$urlMatches = [regex]::Matches($dlHtml, "https?://[^'""]+\.msu")
-$downloadUrls = $urlMatches | ForEach-Object { $_.Value } | Select-Object -Unique
-
-if ($downloadUrls.Count -eq 0) {
-    # Also try .cab files
-    $urlMatches = [regex]::Matches($dlHtml, "https?://[^'""]+\.(msu|cab)")
-    $downloadUrls = $urlMatches | ForEach-Object { $_.Value } | Select-Object -Unique
-}
-
-if ($downloadUrls.Count -eq 0) {
-    Write-Error "No download URLs found for update $($selectedUpdate.GUID)"
-    Write-Host "DownloadDialog response (first 2000 chars):"
-    Write-Host $dlHtml.Substring(0, [Math]::Min(2000, $dlHtml.Length))
-    exit 1
-}
-
-Write-Host "Found $($downloadUrls.Count) download URL(s):"
-foreach ($url in $downloadUrls) {
-    Write-Host "  $url"
-}
-
-# Download all update files
-Write-Host "Downloading updates to $updateDir..."
-foreach ($url in $downloadUrls) {
+# Download CU files
+foreach ($url in $cuUrls) {
     $fileName = [System.IO.Path]::GetFileName(($url -split '\?')[0])
     Write-Host "Downloading $fileName..."
-    aria2c --max-connection-per-server=16 --split=16 -d $updateDir -o $fileName $url
+    aria2c --max-connection-per-server=16 --split=16 -d $cuDir -o $fileName $url
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to download $url"
         exit 1
     }
 }
 
-$updateFiles = Get-ChildItem $updateDir -File
-Write-Host "Downloaded $($updateFiles.Count) update file(s):"
-$updateFiles | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
+$cuFiles = Get-ChildItem $cuDir -File
+Write-Host "Downloaded CU file(s):"
+$cuFiles | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
 
-# --- Step 3: Mount install.wim and apply updates to ALL indexes ---
+# --- Step 3: Search and download .NET Framework cumulative update ---
+
+$netDir = Join-Path $WorkDir "net_updates"
+New-Item -ItemType Directory -Path $netDir -Force | Out-Null
+
+$netQuery = "Cumulative Update for .NET Framework 3.5 and 4.8.1 for Windows 11, version 24H2 for x64"
+Write-Host ""
+Write-Host "Searching Microsoft Update Catalog for: $netQuery"
+
+$netUpdates = Search-UpdateCatalog -Query $netQuery
+Write-Host "Found $($netUpdates.Count) .NET catalog entries"
+
+$selectedNet = $null
+if ($netUpdates.Count -gt 0) {
+    Write-Host "First 3 entries:"
+    $netUpdates | Select-Object -First 3 | ForEach-Object { Write-Host "  [$($_.GUID)] $($_.Title)" }
+
+    # Filter for non-Preview .NET updates
+    $netFiltered = $netUpdates | Where-Object {
+        $_.Title -notmatch "Preview" -and
+        $_.Title -match "\.NET Framework" -and
+        $_.Title -match "x64"
+    }
+
+    if (-not $netFiltered -or $netFiltered.Count -eq 0) {
+        $netFiltered = $netUpdates | Where-Object { $_.Title -match "\.NET" } | Select-Object -First 1
+    }
+
+    if ($netFiltered -and $netFiltered.Count -gt 0) {
+        $selectedNet = $netFiltered | Select-Object -First 1
+        Write-Host "Selected .NET update: $($selectedNet.Title)"
+
+        $netUrls = Get-CatalogDownloadUrls -GUID $selectedNet.GUID
+        if ($netUrls.Count -gt 0) {
+            foreach ($url in $netUrls) {
+                $fileName = [System.IO.Path]::GetFileName(($url -split '\?')[0])
+                Write-Host "Downloading $fileName..."
+                aria2c --max-connection-per-server=16 --split=16 -d $netDir -o $fileName $url
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Failed to download .NET update: $url"
+                    $selectedNet = $null
+                }
+            }
+        } else {
+            Write-Warning "No download URLs for .NET update"
+            $selectedNet = $null
+        }
+    }
+}
+
+if (-not $selectedNet) {
+    Write-Warning "Skipping .NET CU integration (not found or download failed)"
+}
+
+$netFiles = Get-ChildItem $netDir -File -ErrorAction SilentlyContinue
+if ($netFiles) {
+    Write-Host "Downloaded .NET CU file(s):"
+    $netFiles | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
+}
+
+# --- Step 4: Mount install.wim and patch ALL indexes ---
 
 $wimPath = Join-Path $extractDir "sources\install.wim"
 if (-not (Test-Path $wimPath)) {
@@ -190,6 +224,15 @@ Set-ItemProperty -Path $wimPath -Name IsReadOnly -Value $false
 
 $mountDir = Join-Path $WorkDir "mount"
 New-Item -ItemType Directory -Path $mountDir -Force | Out-Null
+
+# Check for .NET 3.5 SxS source in ISO
+$sxsDir = Join-Path $extractDir "sources\sxs"
+$hasSxs = Test-Path $sxsDir
+if ($hasSxs) {
+    Write-Host ".NET 3.5 SxS source found at $sxsDir"
+} else {
+    Write-Warning ".NET 3.5 SxS source not found in ISO, skipping .NET 3.5 enablement"
+}
 
 # Get WIM image info
 $wimInfo = Get-WindowsImage -ImagePath $wimPath
@@ -212,7 +255,69 @@ foreach ($img in $wimInfo) {
     Write-Host "Mounting WIM index $idx..."
     Mount-WindowsImage -ImagePath $wimPath -Index $idx -Path $mountDir
 
-    # Optional: integrate drivers
+    # 4a: Enable .NET Framework 3.5
+    if ($hasSxs) {
+        Write-Host "Enabling .NET Framework 3.5..."
+        try {
+            Enable-WindowsOptionalFeature -Path $mountDir -FeatureName "NetFx3" -All `
+                -Source $sxsDir -LimitAccess -ErrorAction Stop | Out-Null
+            Write-Host ".NET Framework 3.5 enabled"
+        } catch {
+            Write-Warning "Failed to enable .NET Framework 3.5: $_"
+        }
+    }
+
+    # 4b: Apply CU packages one by one (skip already-applied)
+    Write-Host "Applying OS cumulative update packages..."
+    foreach ($pkg in $cuFiles) {
+        Write-Host "  Applying $($pkg.Name)..."
+        try {
+            Add-WindowsPackage -Path $mountDir -PackagePath $pkg.FullName -ErrorAction Stop | Out-Null
+            Write-Host "    Applied successfully"
+        } catch {
+            $errMsg = $_.Exception.Message
+            # 0x80070228 / 0x800f081e = already applied or not applicable — safe to skip
+            if ($errMsg -match "0x80070228|0x800f081e|already installed|not applicable") {
+                Write-Host "    Skipped (already applied or not applicable)"
+            } else {
+                Write-Warning "    Failed: $errMsg"
+                Write-Warning "    Continuing with remaining packages"
+            }
+        }
+    }
+
+    # 4c: Apply .NET CU
+    if ($netFiles -and $netFiles.Count -gt 0) {
+        Write-Host "Applying .NET Framework cumulative update..."
+        foreach ($pkg in $netFiles) {
+            Write-Host "  Applying $($pkg.Name)..."
+            try {
+                Add-WindowsPackage -Path $mountDir -PackagePath $pkg.FullName -ErrorAction Stop | Out-Null
+                Write-Host "    Applied successfully"
+            } catch {
+                $errMsg = $_.Exception.Message
+                if ($errMsg -match "0x80070228|0x800f081e|already installed|not applicable") {
+                    Write-Host "    Skipped (already applied or not applicable)"
+                } else {
+                    Write-Warning "    Failed: $errMsg"
+                }
+            }
+        }
+    }
+
+    # 4d: Add VP9 Video Extensions
+    if ($VP9AppxPath -and (Test-Path $VP9AppxPath)) {
+        Write-Host "Adding VP9 Video Extensions..."
+        try {
+            Add-AppxProvisionedPackage -Path $mountDir -PackagePath $VP9AppxPath `
+                -SkipLicense -ErrorAction Stop | Out-Null
+            Write-Host "VP9 Video Extensions added"
+        } catch {
+            Write-Warning "Failed to add VP9 Video Extensions: $_"
+        }
+    }
+
+    # 4e: Add drivers
     if ($DriversDir) {
         Write-Host "Adding drivers from $DriversDir..."
         try {
@@ -224,17 +329,7 @@ foreach ($img in $wimInfo) {
         }
     }
 
-    # Apply updates
-    Write-Host "Applying updates via DISM..."
-    try {
-        Add-WindowsPackage -Path $mountDir -PackagePath $updateDir -ErrorAction Stop
-        Write-Host "Updates applied successfully"
-    } catch {
-        Write-Warning "Add-WindowsPackage encountered an error: $_"
-        Write-Warning "Attempting to continue - some updates may have been applied"
-    }
-
-    # Extract version from first index only
+    # 4f: Extract version from first index only
     if (-not $patchedVersion) {
         Write-Host "Reading patched image version..."
         $softwareHive = Join-Path $mountDir "Windows\System32\config\SOFTWARE"
@@ -250,11 +345,10 @@ foreach ($img in $wimInfo) {
         }
     }
 
-    # Dismount and save
+    # 4g: Dismount, remount, cleanup, dismount
     Write-Host "Dismounting WIM (saving changes)..."
     Dismount-WindowsImage -Path $mountDir -Save
 
-    # Remount for cleanup
     Write-Host "Remounting WIM for cleanup..."
     Mount-WindowsImage -ImagePath $wimPath -Index $idx -Path $mountDir
 
@@ -272,7 +366,7 @@ foreach ($img in $wimInfo) {
 Write-Host ""
 Write-Host "All WIM indexes patched"
 
-# --- Step 4: Rebuild ISO with cdimage.exe ---
+# --- Step 5: Rebuild ISO with cdimage.exe ---
 
 Write-Host "Rebuilding ISO with cdimage.exe..."
 
@@ -323,7 +417,7 @@ if ($env:GITHUB_OUTPUT) {
     "patched_version=$patchedVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
     "patched_iso_name=$newIsoName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
     "editions=$($editionList -join ', ')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-    "update_title=$($selectedUpdate.Title)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+    "update_title=$($selectedCU.Title)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 }
 
 # Cleanup work directory
@@ -331,8 +425,12 @@ Write-Host "Cleaning up work directory..."
 Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "Cumulative update integration complete!"
+Write-Host "=== Cumulative update integration complete! ==="
 Write-Host "  ISO: $newIsoName"
 Write-Host "  Version: $patchedVersion"
 Write-Host "  Editions: $($editionList -join ', ')"
-Write-Host "  Update: $($selectedUpdate.Title)"
+Write-Host "  OS CU: $($selectedCU.Title)"
+if ($selectedNet) { Write-Host "  .NET CU: $($selectedNet.Title)" }
+if ($hasSxs) { Write-Host "  .NET 3.5: Enabled" }
+if ($VP9AppxPath) { Write-Host "  VP9: Integrated" }
+if ($DriversDir) { Write-Host "  Drivers: Integrated" }
