@@ -1,19 +1,16 @@
-name: Build Windows 10 ISO
+name: Build Windows 11 LTSC 2024 ISO
 
 on:
   workflow_dispatch:
     inputs:
+      iso_url:
+        description: 'Direct download URL for LTSC 2024 base ISO (see massgrave.dev/windows_ltsc_links)'
+        type: string
+        required: true
       language:
         description: 'Language code (e.g., en-us, zh-cn)'
         type: string
         default: 'en-us'
-      edition:
-        description: 'Windows edition'
-        type: choice
-        options:
-          - PROFESSIONAL
-          - CORE
-        default: 'PROFESSIONAL'
       drivers_url:
         description: 'URL to drivers zip (optional, must contain OS/ ALL/ or WinPE/ subfolders with .inf drivers)'
         type: string
@@ -30,22 +27,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Query UUP Dump API
-        id: query
+      - name: Download base LTSC ISO
         shell: pwsh
         run: |
-          .\scripts\query-build.ps1 `
-            -Product "Windows 10" `
-            -Channel "Retail" `
-            -Milestone "22H2" `
-            -Architecture "amd64" `
-            -Language "${{ inputs.language }}" `
-            -Edition "${{ inputs.edition }}"
+          $isoDir = "D:\base_iso"
+          $isoPath = "$isoDir\ltsc.iso"
+          $url = "${{ inputs.iso_url }}"
+          New-Item -ItemType Directory -Path $isoDir -Force | Out-Null
 
-      - name: Download UUP files
-        shell: pwsh
-        run: |
-          .\scripts\download-uup.ps1 -DownloadDir "D:\UUPs"
+          $ok = $false
+
+          # 1) curl GET
+          Write-Host "Downloading base LTSC ISO via curl..."
+          curl.exe -L -f -o $isoPath $url 2>&1
+          if ((Test-Path $isoPath) -and (Get-Item $isoPath).Length -gt 3GB) { $ok = $true }
+
+          # 2) aria2c fallback
+          if (-not $ok) {
+              Write-Host "curl didn't work, trying aria2c..."
+              Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
+              aria2c --max-connection-per-server=16 --split=16 -d $isoDir -o "ltsc.iso" $url
+              if ((Test-Path $isoPath) -and (Get-Item $isoPath).Length -gt 3GB) { $ok = $true }
+          }
+
+          if (-not $ok) {
+              Write-Error "Failed to download a valid ISO (file missing or smaller than 3 GB)"
+              exit 1
+          }
+
+          $size = [math]::Round((Get-Item $isoPath).Length / 1GB, 2)
+          Write-Host "Base ISO downloaded: ${size} GB"
 
       - name: Download converter
         shell: pwsh
@@ -116,17 +127,19 @@ jobs:
           Write-Host "Drivers extracted to $driversDir"
           Get-ChildItem $driversDir -Recurse -Filter "*.inf" | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
 
-      - name: Convert to ISO
+      - name: Integrate latest cumulative update
+        id: integrate
         shell: pwsh
         run: |
           $params = @{
+            BaseIsoPath  = "D:\base_iso\ltsc.iso"
             ConverterDir = "D:\converter"
-            UUPDir       = "D:\UUPs"
+            WorkDir      = "D:\update_work"
           }
           if (Test-Path "D:\drivers") {
             $params.DriversDir = "D:\drivers"
           }
-          .\scripts\convert-to-iso.ps1 @params
+          .\scripts\integrate-ltsc-update.ps1 @params
 
       - name: Split ISO with 7z
         id: split
@@ -175,16 +188,17 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ steps.query.outputs.build_date }}-${{ steps.query.outputs.build_number }}-amd64-${{ inputs.language }}-${{ inputs.edition }}"
-          name: "${{ steps.query.outputs.release_title }} (amd64, ${{ inputs.language }}, ${{ inputs.edition }})"
+          tag_name: "${{ steps.integrate.outputs.patched_version }}-amd64-${{ inputs.language }}-LTSC"
+          name: "Windows 11 LTSC 2024 (${{ steps.integrate.outputs.patched_version }}) (amd64, ${{ inputs.language }})"
           body: |
-            ## Windows 10 Build Info
-            - **Build:** ${{ steps.query.outputs.update_title }}
+            ## Windows 11 LTSC 2024 Build Info
+            - **Update:** ${{ steps.integrate.outputs.update_title }}
+            - **Patched Version:** ${{ steps.integrate.outputs.patched_version }}
             - **Architecture:** amd64
             - **Language:** ${{ inputs.language }}
-            - **Edition:** ${{ inputs.edition }}
-            - **Options:** Updates integrated, Component cleanup, .NET 3.5
-            - **Built on:** ${{ steps.query.outputs.build_date }}
+            - **Editions:** ${{ steps.integrate.outputs.editions }}
+            - **Options:** Latest CU integrated, Drivers integrated, Component cleanup
+            - **Base ISO:** LTSC 2024 (26100.1742)
 
             ## How to Extract
             Download all `.7z.xxx` files to the same folder, then run:

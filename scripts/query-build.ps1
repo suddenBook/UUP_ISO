@@ -128,32 +128,111 @@ elseif ($Product -eq "Windows Server") {
     $updateTitle = $matched.title
     Write-Host "Found: $updateTitle (UUID: $uuid)"
 }
-elseif ($Channel -in @("Retail", "ReleasePreview")) {
-    # Windows 11: Retail/ReleasePreview channels
-    Write-Host "Querying listid API for $Channel channel, milestone $Milestone..."
-    $searchUrl = "$baseUrl/listid.php?search=$Milestone&sortByDate=1"
-    $response = Invoke-RestMethod -Uri $searchUrl -Method Get
-
-    if ($response.response.error) {
-        Write-Error "API error: $($response.response.error)"
+else {
+    # Windows 11: All channels use fetchupd API with correct ring parameter
+    $ringMap = @{
+        "Retail"         = "RETAIL"
+        "ReleasePreview" = "RP"
+        "Beta"           = "WIF"
+        "Dev"            = "WIS"
+        "Canary"         = "Canary"
+    }
+    $ring = $ringMap[$Channel]
+    if (-not $ring) {
+        Write-Error "Unknown channel: $Channel"
         exit 1
     }
 
-    $builds = $response.response.builds
-    if (-not $builds) {
-        Write-Error "No builds found for milestone $Milestone"
-        exit 1
+    # Milestone config: each entry has a BuildPrefix for filtering results, and two possible
+    # BaseBuild values for Retail/RP queries:
+    #   - UpgradeBuild: a build from the PREVIOUS milestone, triggers the cross-version upgrade
+    #     path on Windows Update. Returns the frozen, official Retail build (e.g., 26200.8037).
+    #   - FallbackBuild: a build from the SAME milestone, triggers the CU path. Returns the
+    #     latest CU on the server, which may be ahead of what's broadly available on Retail.
+    # We prefer UpgradeBuild when available. FallbackBuild is used when the upgrade path
+    # isn't available yet (e.g., newly released milestones).
+    $milestoneConfig = @{
+        "26H1" = @{ UpgradeBuild = "26200.1";  FallbackBuild = "28000.1";  BuildPrefix = "28000" }
+        "25H2" = @{ UpgradeBuild = "26100.1";  FallbackBuild = "26200.1";  BuildPrefix = "26200" }
+        "24H2" = @{ UpgradeBuild = "22631.1";  FallbackBuild = "26100.1";  BuildPrefix = "26100" }
     }
 
+    $fetchUrl = "$baseUrl/fetchupd.php?arch=$Architecture&ring=$ring"
     $matched = $null
-    foreach ($prop in $builds.PSObject.Properties) {
-        $build = $prop.Value
-        $titleMatch = $build.title -like "*Windows 11, version $Milestone*"
-        $archMatch = $build.arch -eq $Architecture
-        if ($titleMatch -and $archMatch) {
-            $matched = $build
-            $uuid = $build.uuid
-            break
+
+    if ($Channel -in @("Retail", "ReleasePreview")) {
+        $config = $milestoneConfig[$Milestone]
+        if (-not $config) {
+            Write-Error "Unknown milestone: $Milestone. Cannot determine base build for fetchupd query."
+            exit 1
+        }
+        $buildPrefix = $config.BuildPrefix
+
+        # Try upgrade path first (cross-version), then fall back to CU path (same-version)
+        $buildCandidates = @($config.UpgradeBuild, $config.FallbackBuild) | Select-Object -Unique
+        foreach ($baseBuild in $buildCandidates) {
+            $tryUrl = "$fetchUrl&build=$baseBuild"
+            Write-Host "Querying fetchupd API for $Channel channel (ring: $ring), build=$baseBuild..."
+            Write-Host "URL: $tryUrl"
+
+            try {
+                $response = Invoke-RestMethod -Uri $tryUrl -Method Get
+            } catch {
+                Write-Warning "Request failed: $_"
+                continue
+            }
+
+            if ($response.response.error) {
+                Write-Warning "API returned: $($response.response.error) (build=$baseBuild)"
+                Start-Sleep -Seconds 10
+                continue
+            }
+
+            $updates = $response.response.updateArray
+            if (-not $updates) {
+                Write-Warning "No updateArray in response (build=$baseBuild)"
+                Start-Sleep -Seconds 10
+                continue
+            }
+
+            foreach ($update in $updates) {
+                if ($update.foundBuild -like "$buildPrefix.*") {
+                    $matched = $update
+                    Write-Host "Matched via build=$baseBuild"
+                    break
+                }
+            }
+            if ($matched) { break }
+
+            Write-Host "No matching $buildPrefix.* build found with build=$baseBuild, trying next..."
+            Start-Sleep -Seconds 10
+        }
+    } else {
+        # Insider channels (Beta/Dev/Canary): no build parameter needed
+        Write-Host "Querying fetchupd API for $Channel channel (ring: $ring)..."
+        Write-Host "URL: $fetchUrl"
+        $response = Invoke-RestMethod -Uri $fetchUrl -Method Get
+
+        if ($response.response.error) {
+            Write-Error "API error: $($response.response.error)"
+            exit 1
+        }
+
+        $updates = $response.response.updateArray
+        if (-not $updates) {
+            Write-Error "No builds found for $Channel channel ($Architecture)"
+            exit 1
+        }
+
+        # Take the first OS build (skip .NET Framework / Stack Package updates)
+        foreach ($update in $updates) {
+            if ($update.foundBuild -match '^\d{5}\.' -and $update.updateTitle -notlike "*Framework*" -and $update.updateTitle -notlike "*Stack Package*") {
+                $matched = $update
+                break
+            }
+        }
+        if (-not $matched) {
+            $matched = $updates[0]
         }
     }
 
@@ -162,40 +241,8 @@ elseif ($Channel -in @("Retail", "ReleasePreview")) {
         exit 1
     }
 
-    $updateTitle = $matched.title
-    Write-Host "Found: $updateTitle (UUID: $uuid)"
-}
-else {
-    # Windows 11: Beta, Dev, Canary - use fetchupd API
-    $ringMap = @{
-        "Beta"    = "WIF"
-        "Dev"     = "WIS"
-        "Canary"  = "Canary"
-    }
-    $ring = $ringMap[$Channel]
-    if (-not $ring) {
-        Write-Error "Unknown channel: $Channel"
-        exit 1
-    }
-
-    Write-Host "Querying fetchupd API for $Channel channel (ring: $ring)..."
-    $fetchUrl = "$baseUrl/fetchupd.php?arch=$Architecture&ring=$ring"
-    $response = Invoke-RestMethod -Uri $fetchUrl -Method Get
-
-    if ($response.response.error) {
-        Write-Error "API error: $($response.response.error)"
-        exit 1
-    }
-
-    $builds = $response.response.builds
-    if (-not $builds) {
-        Write-Error "No builds found for $Channel channel ($Architecture)"
-        exit 1
-    }
-
-    $firstProp = $builds.PSObject.Properties | Select-Object -First 1
-    $uuid = $firstProp.Value.uuid
-    $updateTitle = $firstProp.Value.title
+    $uuid = $matched.updateId
+    $updateTitle = $matched.updateTitle
     Write-Host "Found: $updateTitle (UUID: $uuid)"
 }
 

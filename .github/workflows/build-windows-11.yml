@@ -17,6 +17,7 @@ on:
         description: 'Windows version (Retail/ReleasePreview only)'
         type: choice
         options:
+          - 26H1
           - 25H2
           - 24H2
         default: '25H2'
@@ -52,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Query UUP Dump API
         id: query
