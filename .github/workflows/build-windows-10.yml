@@ -3,6 +3,14 @@ name: Build Windows 10 ISO
 on:
   workflow_dispatch:
     inputs:
+      architecture:
+        description: 'CPU architecture'
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - x86
+        default: 'amd64'
       language:
         description: 'Language code (e.g., en-us, zh-cn)'
         type: string
@@ -38,7 +46,7 @@ jobs:
             -Product "Windows 10" `
             -Channel "Retail" `
             -Milestone "22H2" `
-            -Architecture "amd64" `
+            -Architecture "${{ inputs.architecture }}" `
             -Language "${{ inputs.language }}" `
             -Edition "${{ inputs.edition }}"
 
@@ -175,12 +183,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ steps.query.outputs.build_date }}-${{ steps.query.outputs.build_number }}-amd64-${{ inputs.language }}-${{ inputs.edition }}"
-          name: "${{ steps.query.outputs.release_title }} (amd64, ${{ inputs.language }}, ${{ inputs.edition }})"
+          tag_name: "${{ steps.query.outputs.build_date }}-${{ steps.query.outputs.build_number }}-${{ inputs.architecture }}-${{ inputs.language }}-${{ inputs.edition }}"
+          name: "${{ steps.query.outputs.release_title }} (${{ inputs.architecture }}, ${{ inputs.language }}, ${{ inputs.edition }})"
           body: |
             ## Windows 10 Build Info
             - **Build:** ${{ steps.query.outputs.update_title }}
-            - **Architecture:** amd64
+            - **Architecture:** ${{ inputs.architecture }}
             - **Language:** ${{ inputs.language }}
             - **Edition:** ${{ inputs.edition }}
             - **Options:** Updates integrated, Component cleanup, .NET 3.5

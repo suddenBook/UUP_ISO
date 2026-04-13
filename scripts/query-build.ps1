@@ -57,9 +57,9 @@ if ($Product -in @("Windows 11", "Windows 10") -and $Edition -notin $clientEditi
     exit 1
 }
 
-# Validate architecture: arm64 only for Windows 11
-if ($Product -in @("Windows 10", "Windows Server") -and $Architecture -eq "arm64") {
-    Write-Error "arm64 is only supported for Windows 11. $Product requires amd64."
+# Validate architecture: arm64 not supported for Windows Server
+if ($Product -eq "Windows Server" -and $Architecture -eq "arm64") {
+    Write-Error "arm64 is not supported for Windows Server. Use amd64 instead."
     exit 1
 }
 
